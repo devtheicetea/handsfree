@@ -6,8 +6,13 @@ import type { BridgeToClient } from "../src/protocol.js";
 function fakeQueryFn(): QueryFn {
   return ({ prompt }) => {
     async function* gen() {
-      yield { type: "system", subtype: "init", session_id: "sess-1", tools: ["Read", "Bash"] } as any;
+      // Models the real SDK: init is only emitted AFTER the first user input.
+      let first = true;
       for await (const userMsg of prompt as AsyncIterable<any>) {
+        if (first) {
+          first = false;
+          yield { type: "system", subtype: "init", session_id: "sess-1", tools: ["Read", "Bash"] } as any;
+        }
         const text = typeof userMsg.message.content === "string" ? userMsg.message.content : "";
         yield {
           type: "assistant",
@@ -35,8 +40,10 @@ describe("Session", () => {
     session.prompt("hi");
     await session.stop(); // drains the loop deterministically — no arbitrary sleep
 
+    // session_started fires immediately on start() (decoupled from SDK init),
+    // so a new session reports an empty id; the real id is learned internally.
     const started = emitted.find((m) => m.type === "session_started");
-    expect(started).toMatchObject({ type: "session_started", sessionId: "sess-1", projectPath: "/x" });
+    expect(started).toMatchObject({ type: "session_started", sessionId: "", projectPath: "/x" });
 
     const responses = emitted.filter((m) => m.type === "response") as Array<{ text: string; done: boolean }>;
     expect(responses.some((r) => r.text === "echo:hi" && r.done === false)).toBe(true);

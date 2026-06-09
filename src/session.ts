@@ -39,6 +39,8 @@ export class Session {
   private abort: AbortController | null = null;
   private loop: Promise<void> | null = null;
   private emit: ((msg: BridgeToClient) => void) | null = null;
+  /** Real session id, learned from the SDK init event (after the first turn). */
+  private sessionId: string | null = null;
 
   constructor(deps: SessionDeps = {}) {
     this.queryFn = deps.queryFn ?? (realQuery as unknown as QueryFn);
@@ -67,9 +69,13 @@ export class Session {
       try {
         for await (const msg of q) {
           if (msg.type === "system" && (msg as { subtype?: string }).subtype === "init") {
-            const sessionId = (msg as { session_id: string }).session_id;
-            await this.waitForSessionFile(sessionId);
-            emit({ type: "session_started", sessionId, projectPath, mode: policy.getMode() });
+            // The SDK only emits init after the first user message. We do NOT
+            // gate session_started on this (that would deadlock — the client
+            // waits for session_started before prompting). Instead we record
+            // the real session id here for future resume continuity.
+            const id = (msg as { session_id: string }).session_id;
+            await this.waitForSessionFile(id);
+            this.sessionId = id;
           } else if (msg.type === "assistant") {
             const content = (msg as { message: { content: unknown } }).message.content;
             if (Array.isArray(content)) {
@@ -92,6 +98,11 @@ export class Session {
         }
       }
     })();
+
+    // Signal readiness immediately so the client can send its first prompt.
+    // For a resumed session we know the id up front; for a new session the
+    // real id is learned from the init event after the first turn.
+    emit({ type: "session_started", sessionId: resume ?? "", projectPath, mode: policy.getMode() });
   }
 
   prompt(text: string): void {
