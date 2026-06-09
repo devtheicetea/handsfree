@@ -8,7 +8,7 @@ import type { Config } from "./config.js";
 
 const VERSION = "0.1.0";
 const CRASH_WINDOW_MS = 10_000; // resume crashes within this window count toward the loop guard
-const CRASH_LIMIT = 2; // after this many crashes for one resume id, refuse to auto-resume it
+const CRASH_LIMIT = 2; // after N crashes for one resume id within the window, the (N+1)th resume is refused
 
 export interface ServerDeps {
   config: Config;
@@ -28,7 +28,6 @@ export class BridgeServer {
   private session: Session | null = null;
   private policy: PermissionPolicy | null = null;
   private crashes = new Map<string, { count: number; firstAt: number }>();
-  private currentResumeId: string | null = null;
 
   constructor(deps: ServerDeps) {
     this.config = deps.config;
@@ -63,9 +62,8 @@ export class BridgeServer {
     if (this.client) this.send(this.client, msg);
   }
 
-  /** Crash-loop bookkeeping on the session's output stream. */
-  private observe(msg: BridgeToClient): void {
-    const id = this.currentResumeId;
+  /** Crash-loop bookkeeping for a specific resume id on its session's output. */
+  private observe(id: string | null, msg: BridgeToClient): void {
     if (!id) return;
     if (msg.type === "error" && msg.code === "session_crashed") {
       const rec = this.crashes.get(id);
@@ -142,7 +140,7 @@ export class BridgeServer {
             return;
           }
         }
-        this.currentResumeId = resume ?? null;
+        const resumeId = resume ?? null; // captured per-session so crashes attribute correctly
         // Swap to the new session synchronously (start()'s body runs synchronously
         // and establishes readiness) so a prompt racing right behind open_session
         // sees the started session; then drain the previous one.
@@ -164,7 +162,7 @@ export class BridgeServer {
           projectPath: msg.projectPath,
           resume,
           policy: this.policy,
-          emit: (m) => { this.observe(m); this.sendToClient(m); },
+          emit: (m) => { this.observe(resumeId, m); this.sendToClient(m); },
         });
         await previous?.stop();
         await startPromise;

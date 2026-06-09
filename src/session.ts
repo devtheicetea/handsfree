@@ -146,7 +146,12 @@ export class Session {
     });
   }
 
-  /** True while the SDK query loop is alive (between start() and stop()/crash). */
+  /**
+   * True while the SDK query loop is alive (between start() and stop()/crash).
+   * Note: during stop() teardown this can briefly read true after abort() until
+   * the loop's finally runs; a reattach in that window just replays a stale
+   * session_started with no follow-up, which is harmless.
+   */
   isActive(): boolean {
     return this.active;
   }
