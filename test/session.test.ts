@@ -6,7 +6,8 @@ import type { BridgeToClient } from "../src/protocol.js";
 function fakeQueryFn(): QueryFn {
   return ({ prompt }) => {
     async function* gen() {
-      // Models the real SDK: init is only emitted AFTER the first user input.
+      // Models the real SDK: init only after the first user input, then
+      // token deltas arrive as stream_event before the result.
       let first = true;
       for await (const userMsg of prompt as AsyncIterable<any>) {
         if (first) {
@@ -15,10 +16,10 @@ function fakeQueryFn(): QueryFn {
         }
         const text = typeof userMsg.message.content === "string" ? userMsg.message.content : "";
         yield {
-          type: "assistant",
+          type: "stream_event",
           session_id: "sess-1",
           parent_tool_use_id: null,
-          message: { role: "assistant", content: [{ type: "text", text: `echo:${text}` }] },
+          event: { type: "content_block_delta", delta: { type: "text_delta", text: `echo:${text}` } },
         } as any;
         yield { type: "result", subtype: "success", session_id: "sess-1", result: `echo:${text}` } as any;
       }
@@ -90,6 +91,23 @@ describe("Session", () => {
     const session = new Session({ queryFn, waitForSessionFile: async () => {} });
     await session.start({ projectPath: "/x", resume: undefined, policy: new PermissionPolicy([], () => {}), emit: () => {} });
     expect(captured?.settingSources).toEqual(["project"]);
+    await session.stop();
+  });
+
+  it("enables partial streaming (includePartialMessages)", async () => {
+    let captured: { includePartialMessages?: unknown } | undefined;
+    const queryFn: QueryFn = ({ options }) => {
+      captured = options as { includePartialMessages?: unknown };
+      async function* gen() {
+        yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any;
+      }
+      const g = gen() as any;
+      g.setPermissionMode = async () => {};
+      return g;
+    };
+    const session = new Session({ queryFn, waitForSessionFile: async () => {} });
+    await session.start({ projectPath: "/x", resume: undefined, policy: new PermissionPolicy([], () => {}), emit: () => {} });
+    expect(captured?.includePartialMessages).toBe(true);
     await session.stop();
   });
 });

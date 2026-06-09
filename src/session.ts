@@ -12,6 +12,7 @@ export type QueryFn = (params: {
     resume?: string;
     permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
     settingSources?: ("user" | "project" | "local")[];
+    includePartialMessages?: boolean;
     canUseTool?: (
       toolName: string,
       input: Record<string, unknown>,
@@ -70,6 +71,7 @@ export class Session {
         // only project settings (keeps CLAUDE.md) and drop the user's global
         // ~/.claude allow rules so canUseTool governs every tool decision.
         settingSources: ["project"],
+        includePartialMessages: true,
         abortController: this.abort,
         canUseTool: async (toolName, input) => policy.evaluate(toolName, input),
       },
@@ -86,14 +88,12 @@ export class Session {
             const id = (msg as { session_id: string }).session_id;
             await this.waitForSessionFile(id);
             this.sessionId = id;
-          } else if (msg.type === "assistant") {
-            const content = (msg as { message: { content: unknown } }).message.content;
-            if (Array.isArray(content)) {
-              for (const block of content) {
-                if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
-                  emit({ type: "response", text: (block as { text: string }).text, done: false });
-                }
-              }
+          } else if (msg.type === "stream_event") {
+            // includePartialMessages: text deltas arrive as content_block_delta.
+            // We stream these and do NOT also emit the whole assistant message.
+            const ev = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
+            if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
+              emit({ type: "response", text: ev.delta.text, done: false });
             }
           } else if (msg.type === "result") {
             emit({ type: "response", text: "", done: true });
