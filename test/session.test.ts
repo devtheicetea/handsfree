@@ -75,4 +75,21 @@ describe("Session", () => {
     expect(askSpy).toHaveBeenCalledTimes(1);
     await session.stop();
   });
+
+  it("runs in strict permission mode (settingSources: ['project'])", async () => {
+    let captured: { settingSources?: unknown } | undefined;
+    const queryFn: QueryFn = ({ options }) => {
+      captured = options as { settingSources?: unknown };
+      async function* gen() {
+        yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any;
+      }
+      const g = gen() as any;
+      g.setPermissionMode = async () => {};
+      return g;
+    };
+    const session = new Session({ queryFn, waitForSessionFile: async () => {} });
+    await session.start({ projectPath: "/x", resume: undefined, policy: new PermissionPolicy([], () => {}), emit: () => {} });
+    expect(captured?.settingSources).toEqual(["project"]);
+    await session.stop();
+  });
 });

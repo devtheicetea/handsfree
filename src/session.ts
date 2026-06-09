@@ -11,6 +11,7 @@ export type QueryFn = (params: {
     cwd?: string;
     resume?: string;
     permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
+    settingSources?: ("user" | "project" | "local")[];
     canUseTool?: (
       toolName: string,
       input: Record<string, unknown>,
@@ -65,6 +66,10 @@ export class Session {
         cwd: projectPath,
         resume,
         permissionMode: "default",
+        // Bridge is the authoritative permission gate (Phase 1.5 spec §1): load
+        // only project settings (keeps CLAUDE.md) and drop the user's global
+        // ~/.claude allow rules so canUseTool governs every tool decision.
+        settingSources: ["project"],
         abortController: this.abort,
         canUseTool: async (toolName, input) => policy.evaluate(toolName, input),
       },
