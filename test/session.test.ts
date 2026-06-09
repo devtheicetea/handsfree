@@ -110,4 +110,38 @@ describe("Session", () => {
     expect(captured?.includePartialMessages).toBe(true);
     await session.stop();
   });
+
+  it("buffers the in-flight turn and replays it on reattach", async () => {
+    const queryFn: QueryFn = ({ prompt }) => {
+      async function* gen() {
+        let first = true;
+        for await (const _ of prompt as AsyncIterable<any>) {
+          if (first) { first = false; yield { type: "system", subtype: "init", session_id: "s9", tools: [] } as any; }
+          yield { type: "stream_event", session_id: "s9", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "hel" } } } as any;
+          yield { type: "stream_event", session_id: "s9", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "lo" } } } as any;
+        }
+      }
+      const g = gen() as any;
+      g.setPermissionMode = async () => {};
+      return g;
+    };
+    const policy = new PermissionPolicy([], () => {});
+    const session = new Session({ queryFn, waitForSessionFile: async () => {} });
+    await session.start({ projectPath: "/p", resume: undefined, policy, emit: () => {} });
+    session.prompt("hi");
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(session.isActive()).toBe(true);
+
+    const replayed: BridgeToClient[] = [];
+    session.reattach((m) => replayed.push(m));
+
+    expect(replayed[0]).toMatchObject({ type: "session_started", sessionId: "s9", projectPath: "/p" });
+    const replayedText = replayed.filter((m) => m.type === "response").map((m) => (m as { text: string }).text).join("");
+    expect(replayedText).toBe("hello");
+    expect(replayed.some((m) => m.type === "status" && (m as { state: string }).state === "thinking")).toBe(true);
+
+    await session.stop();
+    expect(session.isActive()).toBe(false);
+  });
 });

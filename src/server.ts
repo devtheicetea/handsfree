@@ -48,6 +48,17 @@ export class BridgeServer {
     if (ws.readyState === WebSocket.OPEN) ws.send(encode(msg));
   }
 
+  /**
+   * Send to the *current* client socket. All session output and permission
+   * requests go through here so that on reconnect (this.client is updated in
+   * onConnection) everything follows the new socket automatically — including
+   * the PermissionPolicy's onAsk, which would otherwise stay bound to the old
+   * closed socket and hang a post-reconnect permission prompt.
+   */
+  private sendToClient(msg: BridgeToClient): void {
+    if (this.client) this.send(this.client, msg);
+  }
+
   private onConnection(ws: WebSocket): void {
     let helloDone = false;
     const isBusy = !!(this.client && this.client.readyState === WebSocket.OPEN);
@@ -79,6 +90,12 @@ export class BridgeServer {
         }
         helloDone = true;
         this.send(ws, { type: "hello_ok", version: VERSION });
+        // Auto-reattach: if a session is still live (client reconnected after a
+        // dropped socket), replay current state. Session output + permission
+        // requests already route through sendToClient (the current socket).
+        if (this.session?.isActive()) {
+          this.session.reattach((m) => this.sendToClient(m));
+        }
         return;
       }
 
@@ -106,7 +123,7 @@ export class BridgeServer {
         // sees the started session; then drain the previous one.
         const previous = this.session;
         this.policy = new PermissionPolicy(this.config.safelist, (req) =>
-          this.send(ws, {
+          this.sendToClient({
             type: "permission_request",
             id: req.id,
             tool: req.tool,
@@ -122,7 +139,7 @@ export class BridgeServer {
           projectPath: msg.projectPath,
           resume,
           policy: this.policy,
-          emit: (m) => this.send(ws, m),
+          emit: (m) => this.sendToClient(m),
         });
         await previous?.stop();
         await startPromise;
