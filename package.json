@@ -7,7 +7,7 @@
   "engines": { "node": ">=20" },
   "bin": { "handsfree-bridge": "dist/index.js" },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "node --experimental-strip-types src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
