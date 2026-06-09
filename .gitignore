@@ -141,3 +141,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Handsfree: vendored reference repo (consult-only, never shipped)
+/reference/
