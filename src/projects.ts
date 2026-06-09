@@ -26,10 +26,21 @@ function sessionFilesIn(dir: string): SessionFile[] {
 
 function cwdFromSessionFile(file: string): string | null {
   try {
-    const firstLine = readFileSync(file, "utf8").split("\n").find((l) => l.trim().length > 0);
-    if (!firstLine) return null;
-    const obj = JSON.parse(firstLine) as { cwd?: unknown };
-    return typeof obj.cwd === "string" ? obj.cwd : null;
+    // Claude session files start with metadata entries (last-prompt, mode,
+    // permission-mode) that have no `cwd`; the cwd appears on later message
+    // lines. Scan for the first object that actually carries a string cwd.
+    const lines = readFileSync(file, "utf8").split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const obj = JSON.parse(trimmed) as { cwd?: unknown };
+        if (typeof obj.cwd === "string" && obj.cwd.length > 0) return obj.cwd;
+      } catch {
+        // non-JSON line; keep scanning
+      }
+    }
+    return null;
   } catch {
     return null;
   }

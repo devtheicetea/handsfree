@@ -33,6 +33,29 @@ describe("listProjects", () => {
   });
 });
 
+describe("listProjects with metadata-first session files", () => {
+  it("finds cwd on a later line when the first lines are metadata", () => {
+    // Real Claude session files start with metadata entries (last-prompt, mode,
+    // permission-mode) that have no `cwd`; the cwd appears on later message lines.
+    const home = mkdtempSync(join(tmpdir(), "claude-home2-"));
+    const dir = join(home, "projects", "-Users-me-proj");
+    mkdirSync(dir, { recursive: true });
+    const lines =
+      [
+        JSON.stringify({ type: "last-prompt", value: "hi" }),
+        JSON.stringify({ type: "mode" }),
+        JSON.stringify({ type: "permission-mode" }),
+        JSON.stringify({ type: "user", cwd: "/Users/me/proj", sessionId: "cccc" }),
+      ].join("\n") + "\n";
+    writeFileSync(join(dir, "cccc.jsonl"), lines);
+    const projects = listProjects(home);
+    expect(projects).toHaveLength(1);
+    expect(projects[0]!.path).toBe("/Users/me/proj");
+    expect(projects[0]!.name).toBe("proj");
+    rmSync(home, { recursive: true, force: true });
+  });
+});
+
 describe("resolveResume", () => {
   it("resolves 'latest' to the newest session id", () => {
     expect(resolveResume(claudeHome, "/Users/me/app", "latest")).toBe("bbbb-2222");
