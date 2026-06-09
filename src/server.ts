@@ -101,16 +101,31 @@ export class BridgeServer {
         return;
       case "open_session": {
         const resume = resolveResume(this.claudeHome, msg.projectPath, msg.resume);
+        // Swap to the new session synchronously (start()'s body runs synchronously
+        // and establishes readiness) so a prompt racing right behind open_session
+        // sees the started session; then drain the previous one.
+        const previous = this.session;
         this.policy = new PermissionPolicy(this.config.safelist, (req) =>
-          this.send(ws, { type: "permission_request", id: req.id, tool: req.tool, input: req.input, detail: req.tool }),
+          this.send(ws, {
+            type: "permission_request",
+            id: req.id,
+            tool: req.tool,
+            input: req.input,
+            detail:
+              req.input && typeof req.input === "object"
+                ? `${req.tool} ${JSON.stringify(req.input).slice(0, 180)}`
+                : req.tool,
+          }),
         );
         this.session = this.makeSession();
-        await this.session.start({
+        const startPromise = this.session.start({
           projectPath: msg.projectPath,
           resume,
           policy: this.policy,
           emit: (m) => this.send(ws, m),
         });
+        await previous?.stop();
+        await startPromise;
         return;
       }
       case "prompt":

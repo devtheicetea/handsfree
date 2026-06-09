@@ -9,7 +9,7 @@ export interface Config {
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const port = env.HANDSFREE_PORT ? Number(env.HANDSFREE_PORT) : 8744;
-  if (!Number.isInteger(port) || port <= 0) {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`Invalid HANDSFREE_PORT: ${env.HANDSFREE_PORT}`);
   }
   const safelist = env.HANDSFREE_SAFELIST

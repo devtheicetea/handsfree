@@ -26,4 +26,8 @@ describe("loadConfig", () => {
   it("throws on a non-numeric port", () => {
     expect(() => loadConfig({ HANDSFREE_PORT: "abc" })).toThrow();
   });
+
+  it("throws on an out-of-range port", () => {
+    expect(() => loadConfig({ HANDSFREE_PORT: "70000" })).toThrow();
+  });
 });

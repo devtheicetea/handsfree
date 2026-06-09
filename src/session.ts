@@ -32,6 +32,11 @@ export interface StartParams {
   emit: (msg: BridgeToClient) => void;
 }
 
+/**
+ * Owns one Claude Agent SDK query() for the lifetime of a single session.
+ * Use-once: after stop()/abort/crash, create a new Session for the next
+ * open_session rather than restarting this instance.
+ */
 export class Session {
   private readonly queryFn: QueryFn;
   private readonly waitForSessionFile: (sessionId: string) => Promise<void>;

@@ -22,8 +22,7 @@ export class Pushable<T> implements AsyncIterable<T> {
   [Symbol.asyncIterator](): AsyncIterator<T> {
     return {
       next: (): Promise<IteratorResult<T>> => {
-        const value = this.queue.shift();
-        if (value !== undefined) return Promise.resolve({ value, done: false });
+        if (this.queue.length > 0) return Promise.resolve({ value: this.queue.shift()!, done: false });
         if (this.ended) return Promise.resolve({ value: undefined as unknown as T, done: true });
         return new Promise((resolve) => this.resolvers.push(resolve));
       },

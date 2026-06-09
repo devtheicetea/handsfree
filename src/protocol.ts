@@ -44,6 +44,8 @@ export type ProjectInfo = {
 export type BridgeToClient =
   | { type: "hello_ok"; version: string }
   | { type: "projects"; projects: ProjectInfo[] }
+  // sessionId is "" for a brand-new session; the real id is only known after the
+  // first turn (learned from the SDK init event), so treat "" as "id unknown".
   | { type: "session_started"; sessionId: string; projectPath: string; mode: PermissionModeName }
   | { type: "status"; state: "thinking" | "idle" | "error" }
   | { type: "response"; text: string; done: boolean }
