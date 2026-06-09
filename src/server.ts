@@ -7,6 +7,8 @@ import { listProjects, resolveResume, defaultClaudeHome } from "./projects.js";
 import type { Config } from "./config.js";
 
 const VERSION = "0.1.0";
+const CRASH_WINDOW_MS = 10_000; // resume crashes within this window count toward the loop guard
+const CRASH_LIMIT = 2; // after this many crashes for one resume id, refuse to auto-resume it
 
 export interface ServerDeps {
   config: Config;
@@ -25,6 +27,8 @@ export class BridgeServer {
   // instance fields are never contended across clients.
   private session: Session | null = null;
   private policy: PermissionPolicy | null = null;
+  private crashes = new Map<string, { count: number; firstAt: number }>();
+  private currentResumeId: string | null = null;
 
   constructor(deps: ServerDeps) {
     this.config = deps.config;
@@ -57,6 +61,19 @@ export class BridgeServer {
    */
   private sendToClient(msg: BridgeToClient): void {
     if (this.client) this.send(this.client, msg);
+  }
+
+  /** Crash-loop bookkeeping on the session's output stream. */
+  private observe(msg: BridgeToClient): void {
+    const id = this.currentResumeId;
+    if (!id) return;
+    if (msg.type === "error" && msg.code === "session_crashed") {
+      const rec = this.crashes.get(id);
+      if (rec && Date.now() - rec.firstAt < CRASH_WINDOW_MS) rec.count += 1;
+      else this.crashes.set(id, { count: 1, firstAt: Date.now() });
+    } else if (msg.type === "response" && msg.done) {
+      this.crashes.delete(id); // a turn completed successfully — clear the counter
+    }
   }
 
   private onConnection(ws: WebSocket): void {
@@ -118,6 +135,14 @@ export class BridgeServer {
         return;
       case "open_session": {
         const resume = resolveResume(this.claudeHome, msg.projectPath, msg.resume);
+        if (resume) {
+          const rec = this.crashes.get(resume);
+          if (rec && rec.count >= CRASH_LIMIT && Date.now() - rec.firstAt < CRASH_WINDOW_MS) {
+            this.sendToClient({ type: "error", code: "crash_loop", message: "This session keeps crashing on resume. Start fresh with resume: \"new\"." });
+            return;
+          }
+        }
+        this.currentResumeId = resume ?? null;
         // Swap to the new session synchronously (start()'s body runs synchronously
         // and establishes readiness) so a prompt racing right behind open_session
         // sees the started session; then drain the previous one.
@@ -139,7 +164,7 @@ export class BridgeServer {
           projectPath: msg.projectPath,
           resume,
           policy: this.policy,
-          emit: (m) => this.sendToClient(m),
+          emit: (m) => { this.observe(m); this.sendToClient(m); },
         });
         await previous?.stop();
         await startPromise;

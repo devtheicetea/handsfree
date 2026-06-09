@@ -136,6 +136,40 @@ describe("BridgeServer", () => {
     b.close();
   });
 
+  it("guards against a resume crash-loop", async () => {
+    class CrashSession {
+      emit: ((m: BridgeToClient) => void) | null = null;
+      active = false;
+      async start(p: StartParams) { this.emit = p.emit; p.emit({ type: "status", state: "error" }); p.emit({ type: "error", code: "session_crashed", message: "boom" }); }
+      prompt() {}
+      abortTurn() {}
+      async stop() {}
+      isActive() { return this.active; }
+      reattach() {}
+    }
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => new CrashSession() as any,
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+
+    // Two crashing resumes of the same id within the window.
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "sid" }));
+    await new Promise((r) => setTimeout(r, 15));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "sid" }));
+    await new Promise((r) => setTimeout(r, 15));
+
+    // Third resume of the same id should be rejected as crash_loop.
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "sid" }));
+    const got = await waitFor(msgs, (m) => m.type === "error" && (m as { code: string }).code === "crash_loop");
+    expect(got).toMatchObject({ type: "error", code: "crash_loop" });
+    ws.close();
+  });
+
   it("rejects a second concurrent client as busy", async () => {
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
