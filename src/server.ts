@@ -1,15 +1,14 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { AddressInfo } from "node:net";
 import { parseClientMessage, encode, type BridgeToClient, type ClientMessage } from "./protocol.js";
-import { PermissionPolicy } from "./permissions.js";
 import { Session } from "./session.js";
-import { listProjects, resolveResume, defaultClaudeHome } from "./projects.js";
+import { listProjects, defaultClaudeHome } from "./projects.js";
+import { SessionManager } from "./sessionManager.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
 const VERSION = "0.1.0";
-const CRASH_WINDOW_MS = 10_000; // resume crashes within this window count toward the loop guard
-const CRASH_LIMIT = 2; // after N crashes for one resume id within the window, the (N+1)th resume is refused
+const DISCONNECT_GRACE_MS = 120_000;
 
 export interface ServerDeps {
   config: Config;
@@ -21,22 +20,23 @@ export interface ServerDeps {
 export class BridgeServer {
   private wss: WebSocketServer | null = null;
   private readonly config: Config;
-  private readonly makeSession: () => Session;
   private readonly claudeHome: string;
   private client: WebSocket | null = null;
-  // Single-client bridge (v1): one active session/policy at a time. A second
-  // connection is rejected as "busy" before it can reach open_session, so these
-  // instance fields are never contended across clients.
-  private session: Session | null = null;
-  private policy: PermissionPolicy | null = null;
-  private crashes = new Map<string, { count: number; firstAt: number }>();
+  // Single-client bridge (v1): one active client at a time. A second connection
+  // is rejected as "busy" before it can reach open_session.
+  private readonly sessions: SessionManager;
+  private disconnectTimer: NodeJS.Timeout | null = null;
   private readonly logger?: Logger;
 
   constructor(deps: ServerDeps) {
     this.config = deps.config;
-    this.makeSession = deps.makeSession ?? (() => new Session());
     this.claudeHome = deps.claudeHome ?? defaultClaudeHome();
     this.logger = deps.logger;
+    this.sessions = new SessionManager({
+      safelist: this.config.safelist,
+      makeSession: deps.makeSession,
+      claudeHome: this.claudeHome,
+    });
   }
 
   listen(): Promise<number> {
@@ -64,19 +64,6 @@ export class BridgeServer {
    */
   private sendToClient(msg: BridgeToClient): void {
     if (this.client) this.send(this.client, msg);
-  }
-
-  /** Crash-loop bookkeeping for a specific resume id on its session's output. */
-  private observe(id: string | null, msg: BridgeToClient): void {
-    if (!id) return;
-    if (msg.type === "error" && msg.code === "session_crashed") {
-      this.logger?.warn("session_crashed", { id, message: msg.message });
-      const rec = this.crashes.get(id);
-      if (rec && Date.now() - rec.firstAt < CRASH_WINDOW_MS) rec.count += 1;
-      else this.crashes.set(id, { count: 1, firstAt: Date.now() });
-    } else if (msg.type === "response" && msg.done) {
-      this.crashes.delete(id); // a turn completed successfully — clear the counter
-    }
   }
 
   private onConnection(ws: WebSocket): void {
@@ -110,14 +97,12 @@ export class BridgeServer {
         }
         helloDone = true;
         this.send(ws, { type: "hello_ok", version: VERSION });
-        const reconnected = !!this.session?.isActive();
-        this.logger?.info("hello", { reconnected });
-        // Auto-reattach: if a session is still live (client reconnected after a
-        // dropped socket), replay current state. Session output + permission
-        // requests already route through sendToClient (the current socket).
-        if (this.session?.isActive()) {
-          this.session.reattach((m) => this.sendToClient(m));
-        }
+        // The client reconnected (or connected fresh) — cancel any pending
+        // sustained-disconnect teardown so live sessions are preserved.
+        if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
+        this.logger?.info("hello", { reconnected: false });
+        // Replay every live session's current state to the (re)connected client.
+        this.sessions.reattachAll((m) => this.sendToClient(m));
         return;
       }
 
@@ -129,7 +114,17 @@ export class BridgeServer {
     });
 
     ws.on("close", () => {
-      if (this.client === ws) this.client = null;
+      if (this.client === ws) {
+        this.client = null;
+        // Don't tear sessions down on a transient drop — the app reconnects and
+        // re-sends hello. Only stop everything after a sustained disconnect.
+        if (this.disconnectTimer) clearTimeout(this.disconnectTimer);
+        this.disconnectTimer = setTimeout(() => {
+          this.logger?.info("sustained disconnect — stopping all sessions");
+          void this.sessions.stopAll();
+          this.disconnectTimer = null;
+        }, DISCONNECT_GRACE_MS);
+      }
     });
   }
 
@@ -138,79 +133,26 @@ export class BridgeServer {
       case "list_projects":
         this.send(ws, { type: "projects", projects: listProjects(this.claudeHome) });
         return;
-      case "open_session": {
-        // Idempotent: if the same project is already live, the client likely just
-        // reconnected and re-sent open_session — reattach instead of tearing down.
-        // A teardown aborts the in-flight turn (spurious crash + lost response/hang).
-        if (this.session?.isActive() && this.session.project === msg.projectPath) {
-          this.logger?.info("open_session reattach (already live)", { projectPath: msg.projectPath });
-          this.session.reattach((m) => this.sendToClient(m));
-          return;
-        }
-        const resume = resolveResume(this.claudeHome, msg.projectPath, msg.resume);
-        this.logger?.info("open_session start", { projectPath: msg.projectPath, resume: resume ?? "new" });
-        if (resume) {
-          const rec = this.crashes.get(resume);
-          if (rec && rec.count >= CRASH_LIMIT && Date.now() - rec.firstAt < CRASH_WINDOW_MS) {
-            this.sendToClient({ type: "error", code: "crash_loop", message: "This session keeps crashing on resume. Start fresh with resume: \"new\"." });
-            return;
-          }
-        }
-        const resumeId = resume ?? null; // captured per-session so crashes attribute correctly
-        // Swap to the new session synchronously (start()'s body runs synchronously
-        // and establishes readiness) so a prompt racing right behind open_session
-        // sees the started session; then drain the previous one.
-        const previous = this.session;
-        // Silence the previous session's output immediately so its in-flight deltas
-        // (still streaming/buffered) don't bleed into the NEW project's conversation
-        // while it tears down asynchronously.
-        previous?.detachEmit();
-        this.policy = new PermissionPolicy(this.config.safelist, (req) =>
-          this.sendToClient({
-            type: "permission_request",
-            id: req.id,
-            tool: req.tool,
-            input: req.input,
-            detail:
-              req.input && typeof req.input === "object"
-                ? `${req.tool} ${JSON.stringify(req.input).slice(0, 180)}`
-                : req.tool,
-          }),
-        );
-        this.session = this.makeSession();
-        const startPromise = this.session.start({
-          projectPath: msg.projectPath,
-          resume,
-          policy: this.policy,
-          emit: (m) => { this.observe(resumeId, m); this.sendToClient(m); },
-        });
-        await previous?.stop();
-        await startPromise;
+      case "open_session":
+        this.logger?.info("open_session", { projectPath: msg.projectPath, resume: msg.resume });
+        await this.sessions.open(msg.projectPath, msg.resume, (m) => this.sendToClient(m));
+        return;
+      case "prompt":
+      case "abort":
+      case "set_mode":
+      case "permission_response": {
+        const ok = this.sessions.route(msg);
+        if (!ok) this.send(ws, { type: "error", projectPath: msg.projectPath, code: "no_session", message: "open the project first" });
         return;
       }
-      case "prompt":
-        if (!this.session) { this.send(ws, { type: "error", code: "no_session", message: "open a session first" }); return; }
-        this.logger?.info("prompt", { len: msg.text.length });
-        this.session.prompt(msg.text);
-        return;
-      case "permission_response":
-        this.policy?.resolve(msg.id, msg.decision);
-        return;
-      case "set_mode":
-        this.policy?.setMode(msg.mode);
-        return;
-      case "abort":
-        this.logger?.info("abort");
-        this.session?.abortTurn();
-        this.policy?.abortAll();
-        return;
       case "hello":
         return;
     }
   }
 
   async close(): Promise<void> {
-    await this.session?.stop();
+    if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
+    await this.sessions.stopAll();
     await new Promise<void>((resolve) => {
       if (!this.wss) return resolve();
       for (const c of this.wss.clients) c.terminate();

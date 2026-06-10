@@ -8,17 +8,19 @@ export const openSessionSchema = z.object({
   projectPath: z.string().min(1),
   resume: z.union([z.literal("latest"), z.literal("new"), z.string().min(1)]),
 });
-export const promptSchema = z.object({ type: z.literal("prompt"), text: z.string().min(1) });
+export const promptSchema = z.object({ type: z.literal("prompt"), projectPath: z.string().min(1), text: z.string().min(1) });
 export const permissionResponseSchema = z.object({
   type: z.literal("permission_response"),
+  projectPath: z.string().min(1),
   id: z.string().min(1),
   decision: z.enum(["allow", "allow_session", "deny"]),
 });
 export const setModeSchema = z.object({
   type: z.literal("set_mode"),
+  projectPath: z.string().min(1),
   mode: z.enum(["safelist", "ask_all", "auto"]),
 });
-export const abortSchema = z.object({ type: z.literal("abort") });
+export const abortSchema = z.object({ type: z.literal("abort"), projectPath: z.string().min(1) });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
@@ -46,11 +48,11 @@ export type BridgeToClient =
   | { type: "projects"; projects: ProjectInfo[] }
   // sessionId is "" for a brand-new session; the real id is only known after the
   // first turn (learned from the SDK init event), so treat "" as "id unknown".
-  | { type: "session_started"; sessionId: string; projectPath: string; mode: PermissionModeName }
-  | { type: "status"; state: "thinking" | "idle" | "error" }
-  | { type: "response"; text: string; done: boolean }
-  | { type: "permission_request"; id: string; tool: string; input: unknown; detail: string }
-  | { type: "error"; code: string; message: string };
+  | { type: "session_started"; projectPath: string; sessionId: string; mode: PermissionModeName }
+  | { type: "status"; projectPath: string; state: "thinking" | "idle" | "error" }
+  | { type: "response"; projectPath: string; turn: number; text: string; done: boolean }
+  | { type: "permission_request"; projectPath: string; id: string; tool: string; input: unknown; detail: string }
+  | { type: "error"; projectPath?: string; code: string; message: string };
 
 // ---------- parsing ----------
 export type ParseResult =

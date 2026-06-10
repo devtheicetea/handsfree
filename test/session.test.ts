@@ -219,4 +219,25 @@ describe("Session", () => {
     expect(emitted.some((m) => m.type === "error" && (m as { code: string }).code === "session_crashed")).toBe(false);
     expect(emitted.some((m) => m.type === "status" && (m as { state: string }).state === "error")).toBe(false);
   });
+
+  it("numbers responses per turn and keeps the last turn buffered until the next prompt", async () => {
+    const emitted: BridgeToClient[] = [];
+    const policy = new PermissionPolicy(["Read"], () => {});
+    const session = new Session({ queryFn: fakeQueryFn(), waitForSessionFile: async () => {} });
+    await session.start({ projectPath: "/p", resume: undefined, policy, emit: (m) => emitted.push(m) });
+    session.prompt("one");
+    await new Promise((r) => setTimeout(r, 20));
+    const firstResp = emitted.find((m) => m.type === "response" && (m as { text: string }).text);
+    expect((firstResp as { turn: number }).turn).toBe(1);
+    const replay: BridgeToClient[] = [];
+    session.reattach((m) => replay.push(m));
+    expect(replay.some((m) => m.type === "response" && (m as { text: string }).text.includes("echo:one"))).toBe(true);
+    session.prompt("two");
+    await new Promise((r) => setTimeout(r, 20));
+    // reattach() above rebound the emit sink to `replay`, so the second turn's
+    // responses land there (not in `emitted`).
+    const secondResp = replay.filter((m) => m.type === "response" && (m as { text: string }).text).pop();
+    expect((secondResp as { turn: number }).turn).toBe(2);
+    await session.stop();
+  });
 });
