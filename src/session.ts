@@ -20,7 +20,10 @@ export type QueryFn = (params: {
     ) => Promise<unknown>;
     abortController?: AbortController;
   };
-}) => AsyncGenerator<SDKMessage, void> & { setPermissionMode?: (m: string) => Promise<void> };
+}) => AsyncGenerator<SDKMessage, void> & {
+  setPermissionMode?: (m: string) => Promise<void>;
+  interrupt?: () => Promise<void>;
+};
 
 export interface SessionDeps {
   queryFn?: QueryFn;
@@ -44,6 +47,7 @@ export class Session {
   private readonly waitForSessionFile: (sessionId: string) => Promise<void>;
   private prompts: Pushable<SDKUserMessage> | null = null;
   private abort: AbortController | null = null;
+  private queryObj: { interrupt?: () => Promise<void> } | null = null;
   private loop: Promise<void> | null = null;
   private emit: ((msg: BridgeToClient) => void) | null = null;
   /** Real session id, learned from the SDK init event (after the first turn). */
@@ -98,6 +102,7 @@ export class Session {
       },
     });
 
+    this.queryObj = q;
     this.loop = (async () => {
       try {
         for await (const msg of q) {
@@ -181,17 +186,19 @@ export class Session {
   }
 
   /**
-   * Abort the in-flight turn. This aborts the underlying SDK query, so the
-   * session loop ends; to continue, open a new session (optionally resuming
-   * the same sessionId). Abort-and-continue within one live query is Phase 1.5.
+   * Interrupt the in-flight turn (barge-in) WITHOUT ending the session. Uses the
+   * SDK's query.interrupt() so the query loop stays alive and the next prompt — the
+   * user's barge-in question — is processed. (Aborting the controller instead would
+   * end the query entirely and the following prompt would hang with no live loop.)
    */
   abortTurn(): void {
-    this.abort?.abort();
+    void this.queryObj?.interrupt?.().catch(() => {});
   }
 
   async stop(): Promise<void> {
     this.prompts?.end();
     this.abort?.abort();
+    this.queryObj = null;
     if (this.loop) await this.loop.catch(() => {});
   }
 }

@@ -145,6 +145,41 @@ describe("Session", () => {
     expect(session.isActive()).toBe(false);
   });
 
+  it("interrupts the current turn on abort but keeps the session alive for the next prompt", async () => {
+    let interrupts = 0;
+    const queryFn: QueryFn = ({ prompt }) => {
+      async function* gen() {
+        let first = true;
+        for await (const userMsg of prompt as AsyncIterable<any>) {
+          if (first) { first = false; yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any; }
+          const text = userMsg.message.content as string;
+          yield { type: "stream_event", session_id: "s", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: `r:${text}` } } } as any;
+          yield { type: "result", subtype: "success", session_id: "s", result: `r:${text}` } as any;
+        }
+      }
+      const g = gen() as any;
+      g.setPermissionMode = async () => {};
+      g.interrupt = async () => { interrupts++; };
+      return g;
+    };
+    const emitted: BridgeToClient[] = [];
+    const policy = new PermissionPolicy([], () => {});
+    const session = new Session({ queryFn, waitForSessionFile: async () => {} });
+    await session.start({ projectPath: "/p", resume: undefined, policy, emit: (m) => emitted.push(m) });
+    session.prompt("one");
+    await new Promise((r) => setTimeout(r, 20));
+    session.abortTurn();           // barge-in: must interrupt, NOT abort the query
+    session.prompt("two");         // the post-barge-in question
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(interrupts).toBe(1);                 // used interrupt(), not abortController.abort()
+    expect(session.isActive()).toBe(true);      // session was not torn down
+    const texts = emitted.filter((m) => m.type === "response").map((m) => (m as { text: string }).text);
+    expect(texts).toContain("r:one");
+    expect(texts).toContain("r:two");           // the barge-in prompt was actually processed
+    await session.stop();
+  });
+
   it("does not report a deliberately aborted turn as session_crashed", async () => {
     // The real SDK throws a plain Error("Operation aborted") (name "Error", not
     // "AbortError") when its abortController fires. A deliberate abort — e.g. the
