@@ -119,8 +119,14 @@ export class Session {
           }
         }
       } catch (err) {
+        // A deliberate abort (stop()/abortTurn() → this.abort.abort()) is NOT a crash.
+        // The SDK can throw a plain Error("Operation aborted") whose name is "Error",
+        // not "AbortError", so detect the abort via the signal — not the error name —
+        // otherwise tearing down the previous session on open_session, barge-in, or
+        // push-to-talk would surface a spurious session_crashed to the client.
+        const aborted = this.abort?.signal.aborted ?? false;
         const name = err instanceof Error ? err.name : "";
-        if (name !== "AbortError") {
+        if (!aborted && name !== "AbortError") {
           this.send({ type: "status", state: "error" });
           this.send({ type: "error", code: "session_crashed", message: String(err) });
         }

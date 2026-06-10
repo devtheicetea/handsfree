@@ -144,4 +144,31 @@ describe("Session", () => {
     await session.stop();
     expect(session.isActive()).toBe(false);
   });
+
+  it("does not report a deliberately aborted turn as session_crashed", async () => {
+    // The real SDK throws a plain Error("Operation aborted") (name "Error", not
+    // "AbortError") when its abortController fires. A deliberate abort — e.g. the
+    // previous session being torn down on a second open_session, or barge-in — must
+    // NOT surface as session_crashed.
+    const queryFn: QueryFn = ({ options }) => {
+      async function* gen() {
+        await new Promise<void>((_resolve, reject) => {
+          options.abortController!.signal.addEventListener("abort", () => {
+            reject(new Error("Operation aborted")); // name === "Error"
+          });
+        });
+      }
+      const g = gen() as any;
+      g.setPermissionMode = async () => {};
+      return g;
+    };
+    const emitted: BridgeToClient[] = [];
+    const policy = new PermissionPolicy([], () => {});
+    const session = new Session({ queryFn, waitForSessionFile: async () => {} });
+    await session.start({ projectPath: "/p", resume: undefined, policy, emit: (m) => emitted.push(m) });
+    await session.stop(); // triggers this.abort.abort()
+
+    expect(emitted.some((m) => m.type === "error" && (m as { code: string }).code === "session_crashed")).toBe(false);
+    expect(emitted.some((m) => m.type === "status" && (m as { state: string }).state === "error")).toBe(false);
+  });
 });
