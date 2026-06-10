@@ -5,6 +5,7 @@ import { PermissionPolicy } from "./permissions.js";
 import { Session } from "./session.js";
 import { listProjects, resolveResume, defaultClaudeHome } from "./projects.js";
 import type { Config } from "./config.js";
+import type { Logger } from "./logger.js";
 
 const VERSION = "0.1.0";
 const CRASH_WINDOW_MS = 10_000; // resume crashes within this window count toward the loop guard
@@ -14,6 +15,7 @@ export interface ServerDeps {
   config: Config;
   makeSession?: () => Session;
   claudeHome?: string;
+  logger?: Logger;
 }
 
 export class BridgeServer {
@@ -28,11 +30,13 @@ export class BridgeServer {
   private session: Session | null = null;
   private policy: PermissionPolicy | null = null;
   private crashes = new Map<string, { count: number; firstAt: number }>();
+  private readonly logger?: Logger;
 
   constructor(deps: ServerDeps) {
     this.config = deps.config;
     this.makeSession = deps.makeSession ?? (() => new Session());
     this.claudeHome = deps.claudeHome ?? defaultClaudeHome();
+    this.logger = deps.logger;
   }
 
   listen(): Promise<number> {
@@ -66,6 +70,7 @@ export class BridgeServer {
   private observe(id: string | null, msg: BridgeToClient): void {
     if (!id) return;
     if (msg.type === "error" && msg.code === "session_crashed") {
+      this.logger?.warn("session_crashed", { id, message: msg.message });
       const rec = this.crashes.get(id);
       if (rec && Date.now() - rec.firstAt < CRASH_WINDOW_MS) rec.count += 1;
       else this.crashes.set(id, { count: 1, firstAt: Date.now() });
@@ -105,6 +110,8 @@ export class BridgeServer {
         }
         helloDone = true;
         this.send(ws, { type: "hello_ok", version: VERSION });
+        const reconnected = !!this.session?.isActive();
+        this.logger?.info("hello", { reconnected });
         // Auto-reattach: if a session is still live (client reconnected after a
         // dropped socket), replay current state. Session output + permission
         // requests already route through sendToClient (the current socket).
@@ -132,7 +139,16 @@ export class BridgeServer {
         this.send(ws, { type: "projects", projects: listProjects(this.claudeHome) });
         return;
       case "open_session": {
+        // Idempotent: if the same project is already live, the client likely just
+        // reconnected and re-sent open_session — reattach instead of tearing down.
+        // A teardown aborts the in-flight turn (spurious crash + lost response/hang).
+        if (this.session?.isActive() && this.session.project === msg.projectPath) {
+          this.logger?.info("open_session reattach (already live)", { projectPath: msg.projectPath });
+          this.session.reattach((m) => this.sendToClient(m));
+          return;
+        }
         const resume = resolveResume(this.claudeHome, msg.projectPath, msg.resume);
+        this.logger?.info("open_session start", { projectPath: msg.projectPath, resume: resume ?? "new" });
         if (resume) {
           const rec = this.crashes.get(resume);
           if (rec && rec.count >= CRASH_LIMIT && Date.now() - rec.firstAt < CRASH_WINDOW_MS) {
@@ -170,6 +186,7 @@ export class BridgeServer {
       }
       case "prompt":
         if (!this.session) { this.send(ws, { type: "error", code: "no_session", message: "open a session first" }); return; }
+        this.logger?.info("prompt", { len: msg.text.length });
         this.session.prompt(msg.text);
         return;
       case "permission_response":
@@ -179,6 +196,7 @@ export class BridgeServer {
         this.policy?.setMode(msg.mode);
         return;
       case "abort":
+        this.logger?.info("abort");
         this.session?.abortTurn();
         this.policy?.abortAll();
         return;

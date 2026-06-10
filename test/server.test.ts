@@ -15,6 +15,7 @@ class FakeSession {
   abortTurn() {}
   async stop() {}
   isActive() { return this.active; }
+  get project() { return this.started?.projectPath ?? ""; }
   reattach(emit: (m: BridgeToClient) => void) { this.reattached++; this.emit = emit; emit({ type: "session_started", sessionId: "x", projectPath: "/x", mode: "safelist" }); }
   // Simulate a tool call asking for permission (uses the real policy the server wired in).
   askNow() { void (this.started as StartParams).policy.evaluate("Bash", {}); }
@@ -66,6 +67,30 @@ describe("BridgeServer", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(fake.started?.projectPath).toBe("/x");
     expect(fake.prompts).toContain("hello");
+    ws.close();
+  });
+
+  it("reattaches instead of restarting when the same project is re-opened", async () => {
+    const fake = new FakeSession();
+    let made = 0;
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => { made++; return fake as any; },
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new" }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(made).toBe(1);
+    // The app re-sends open_session for the same project on every reconnect — the
+    // bridge must reattach, not tear down + recreate (which aborts the in-flight turn).
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "latest" }));
+    await waitFor(msgs, () => fake.reattached > 0);
+    expect(made).toBe(1);            // no second session created
+    expect(fake.reattached).toBe(1); // reattached instead
     ws.close();
   });
 

@@ -7,7 +7,7 @@ import { BridgeServer } from "./server.js";
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
   const logger = createLogger(join(tmpdir(), "handsfree-bridge.log"));
-  const server = new BridgeServer({ config });
+  const server = new BridgeServer({ config, logger });
   const port = await server.listen();
   logger.info("bridge listening", { port, bind: config.bindAddress });
 

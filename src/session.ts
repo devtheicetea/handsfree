@@ -162,6 +162,11 @@ export class Session {
     return this.active;
   }
 
+  /** The project path this session is running in (for idempotent re-open). */
+  get project(): string {
+    return this.projectPath;
+  }
+
   /** Rebind the emit sink to a reconnected client and replay current state. */
   reattach(emit: (msg: BridgeToClient) => void): void {
     this.emit = emit;
