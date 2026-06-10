@@ -58,6 +58,7 @@ export class Session {
   private policy: PermissionPolicy | null = null;
   private currentStatus: "thinking" | "idle" | "error" = "idle";
   private turnBuffer: string[] = [];
+  private turnNo = 0;
 
   constructor(deps: SessionDeps = {}) {
     this.queryFn = deps.queryFn ?? (realQuery as unknown as QueryFn);
@@ -67,10 +68,7 @@ export class Session {
   /** Single emit path: tracks status + buffers the in-flight turn for reattach. */
   private send(msg: BridgeToClient): void {
     if (msg.type === "status") this.currentStatus = msg.state;
-    if (msg.type === "response") {
-      if (msg.done) this.turnBuffer = [];
-      else if (msg.text) this.turnBuffer.push(msg.text);
-    }
+    if (msg.type === "response" && !msg.done && msg.text) this.turnBuffer.push(msg.text);
     this.emit?.(msg);
   }
 
@@ -116,11 +114,11 @@ export class Session {
           } else if (msg.type === "stream_event") {
             const ev = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
             if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
-              this.send({ type: "response", text: ev.delta.text, done: false });
+              this.send({ type: "response", turn: this.turnNo, text: ev.delta.text, done: false } as any);
             }
           } else if (msg.type === "result") {
-            this.send({ type: "response", text: "", done: true });
-            this.send({ type: "status", state: "idle" });
+            this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
+            this.send({ type: "status", state: "idle" } as any);
           }
         }
       } catch (err) {
@@ -148,8 +146,9 @@ export class Session {
 
   prompt(text: string): void {
     if (!this.prompts || !this.emit) throw new Error("session not started");
+    this.turnNo += 1;
     this.turnBuffer = [];
-    this.send({ type: "status", state: "thinking" });
+    this.send({ type: "status", state: "thinking" } as any);
     this.prompts.push({
       type: "user",
       message: { role: "user", content: text },
@@ -189,9 +188,9 @@ export class Session {
       sessionId: this.sessionId ?? "",
       projectPath: this.projectPath,
       mode: this.policy?.getMode() ?? "safelist",
-    });
-    for (const text of this.turnBuffer) emit({ type: "response", text, done: false });
-    emit({ type: "status", state: this.currentStatus });
+    } as any);
+    for (const text of this.turnBuffer) emit({ type: "response", turn: this.turnNo, text, done: false } as any);
+    emit({ type: "status", state: this.currentStatus } as any);
   }
 
   /**
