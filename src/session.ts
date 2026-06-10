@@ -172,6 +172,15 @@ export class Session {
     return this.projectPath;
   }
 
+  /**
+   * Stop routing this session's output to the client immediately (without awaiting
+   * teardown). Used when switching to a different project so a still-streaming turn
+   * does not bleed its deltas into the new project's conversation.
+   */
+  detachEmit(): void {
+    this.emit = () => {}; // swallow further output; prompt() still treats the session as live
+  }
+
   /** Rebind the emit sink to a reconnected client and replay current state. */
   reattach(emit: (msg: BridgeToClient) => void): void {
     this.emit = emit;

@@ -15,6 +15,7 @@ class FakeSession {
   abortTurn() {}
   async stop() {}
   isActive() { return this.active; }
+  detachEmit() { this.emit = null; }
   get project() { return this.started?.projectPath ?? ""; }
   reattach(emit: (m: BridgeToClient) => void) { this.reattached++; this.emit = emit; emit({ type: "session_started", sessionId: "x", projectPath: "/x", mode: "safelist" }); }
   // Simulate a tool call asking for permission (uses the real policy the server wired in).
@@ -170,6 +171,7 @@ describe("BridgeServer", () => {
       abortTurn() {}
       async stop() {}
       isActive() { return this.active; }
+      detachEmit() { this.emit = null; }
       reattach() {}
     }
     server = new BridgeServer({

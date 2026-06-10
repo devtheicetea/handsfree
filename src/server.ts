@@ -161,6 +161,10 @@ export class BridgeServer {
         // and establishes readiness) so a prompt racing right behind open_session
         // sees the started session; then drain the previous one.
         const previous = this.session;
+        // Silence the previous session's output immediately so its in-flight deltas
+        // (still streaming/buffered) don't bleed into the NEW project's conversation
+        // while it tears down asynchronously.
+        previous?.detachEmit();
         this.policy = new PermissionPolicy(this.config.safelist, (req) =>
           this.sendToClient({
             type: "permission_request",

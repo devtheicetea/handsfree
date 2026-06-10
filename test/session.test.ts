@@ -145,6 +145,19 @@ describe("Session", () => {
     expect(session.isActive()).toBe(false);
   });
 
+  it("stops emitting after detachEmit so a switched-away session does not bleed", async () => {
+    const emitted: BridgeToClient[] = [];
+    const policy = new PermissionPolicy([], () => {});
+    const session = new Session({ queryFn: fakeQueryFn(), waitForSessionFile: async () => {} });
+    await session.start({ projectPath: "/a", resume: undefined, policy, emit: (m) => emitted.push(m) });
+    session.detachEmit();
+    const before = emitted.length;
+    session.prompt("hi"); // would normally emit status thinking + a response delta
+    await new Promise((r) => setTimeout(r, 20));
+    expect(emitted.length).toBe(before); // nothing reaches the (detached) client
+    await session.stop();
+  });
+
   it("interrupts the current turn on abort but keeps the session alive for the next prompt", async () => {
     let interrupts = 0;
     const queryFn: QueryFn = ({ prompt }) => {
