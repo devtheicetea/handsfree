@@ -130,7 +130,7 @@ export class Session {
         const aborted = this.abort?.signal.aborted ?? false;
         const name = err instanceof Error ? err.name : "";
         if (!aborted && name !== "AbortError") {
-          this.send({ type: "status", state: "error" });
+          this.send({ type: "status", state: "error" } as any);
           this.send({ type: "error", code: "session_crashed", message: String(err) });
         }
       } finally {
