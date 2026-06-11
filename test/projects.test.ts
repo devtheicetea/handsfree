@@ -56,6 +56,31 @@ describe("listProjects with metadata-first session files", () => {
   });
 });
 
+describe("listProjects lastMessage preview", () => {
+  it("attaches the truncated last turn as lastMessage", () => {
+    const home = mkdtempSync(join(tmpdir(), "claude-home-lm-"));
+    const dir = join(home, "projects", "-Users-me-app");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "hello there" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "hi back" }] } }),
+    ].join("\n") + "\n");
+    const projects = listProjects(home);
+    expect(projects[0]!.lastMessage).toEqual({ role: "assistant", text: "hi back", tools: [] });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("uses null lastMessage for an empty session file", () => {
+    const home = mkdtempSync(join(tmpdir(), "claude-home-empty-"));
+    const dir = join(home, "projects", "-Users-me-x");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), JSON.stringify({ cwd: "/Users/me/x", type: "mode", value: "x" }) + "\n");
+    const projects = listProjects(home);
+    expect(projects[0]!.lastMessage).toBeNull();
+    rmSync(home, { recursive: true, force: true });
+  });
+});
+
 describe("resolveResume", () => {
   it("resolves 'latest' to the newest session id", () => {
     expect(resolveResume(claudeHome, "/Users/me/app", "latest")).toBe("bbbb-2222");

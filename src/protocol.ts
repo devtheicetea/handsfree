@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { HistoryItem } from "./sessionHistory.js";
 
 // ---------- client -> bridge ----------
 export const helloSchema = z.object({ type: z.literal("hello"), token: z.string().optional() });
@@ -41,6 +42,7 @@ export type ProjectInfo = {
   name: string;
   lastSessionId: string | null;
   lastActive: number | null;
+  lastMessage: HistoryItem | null;
 };
 
 export type BridgeToClient =
