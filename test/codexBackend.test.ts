@@ -176,6 +176,24 @@ describe("CodexBackend", () => {
     child.emit("error", new Error("spawn codex ENOENT"));
     await expect(run).rejects.toThrow(/ENOENT|jsonrpc/);
   });
+
+  it("returns cleanly when stop() races the startup phase", async () => {
+    const child = new FakeChild(); // never answers initialize
+    const b = new CodexBackend({ spawnFn: spawnOf(child) });
+    const run = (async () => { for await (const _ of b.start({ projectPath: "/p", resume: undefined, evaluate: allow })) { /* none */ } })();
+    await new Promise((r) => setTimeout(r, 10));
+    await b.stop();
+    await expect(run).resolves.toBeUndefined();
+  });
+
+  it("reports the child-exit reason when the child dies during startup", async () => {
+    const child = new FakeChild(); // never answers initialize
+    const b = new CodexBackend({ spawnFn: spawnOf(child) });
+    const run = (async () => { for await (const _ of b.start({ projectPath: "/p", resume: undefined, evaluate: allow })) { /* none */ } })();
+    await new Promise((r) => setTimeout(r, 10));
+    child.emit("exit", 1); // crash during startup
+    await expect(run).rejects.toThrow(/exited with code 1/);
+  });
 });
 
 describe("checkCodexAvailable", () => {

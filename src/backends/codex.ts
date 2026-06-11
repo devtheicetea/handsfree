@@ -107,14 +107,24 @@ export class CodexBackend implements AgentBackend {
     }, this.log);
     this.rpc = rpc;
 
-    await rpc.request(M.initialize, { clientInfo: { name: "handsfree-bridge", title: "Handsfree", version: "0.2.0" } });
-    rpc.notify(M.initialized);
-    const threadParams: Json = { cwd: opts.projectPath, sandbox: SANDBOX_MODE, approvalPolicy: APPROVAL_POLICY };
-    const res = opts.resume
-      ? await rpc.request(M.threadResume, { threadId: opts.resume, ...threadParams })
-      : await rpc.request(M.threadStart, threadParams);
-    const id = (res.thread as { id?: string } | undefined)?.id ?? opts.resume;
-    if (!id) throw new Error("codex: thread/start returned no thread id");
+    let id: string;
+    try {
+      await rpc.request(M.initialize, { clientInfo: { name: "handsfree-bridge", title: "Handsfree", version: "0.2.0" } });
+      rpc.notify(M.initialized);
+      const threadParams: Json = { cwd: opts.projectPath, sandbox: SANDBOX_MODE, approvalPolicy: APPROVAL_POLICY };
+      const res = opts.resume
+        ? await rpc.request(M.threadResume, { threadId: opts.resume, ...threadParams })
+        : await rpc.request(M.threadStart, threadParams);
+      const got = (res.thread as { id?: string } | undefined)?.id ?? opts.resume;
+      if (!got) throw new Error("codex: thread/start returned no thread id");
+      id = got;
+    } catch (err) {
+      // stop() during startup rejects the in-flight request — that's a clean
+      // shutdown, not a crash (spec §5). A real child death during startup is
+      // reported with the structured exit reason, not the jsonrpc wrapper.
+      if (this.stopping) return;
+      throw this.crashError ?? err;
+    }
     this.threadId = id;
     yield { kind: "session_id", id };
 
@@ -150,6 +160,7 @@ export class CodexBackend implements AgentBackend {
     if (method === APPROVAL.exec) {
       const input = { command: params.command, cwd: params.cwd, reason: params.reason } as Record<string, unknown>;
       const r = await opts.evaluate("CodexExec", input);
+      // Only accept/decline are ever sent: session-grants are the bridge's concern (PermissionPolicy allow_session), never codex's acceptForSession.
       return { decision: r.behavior === "allow" ? "accept" : "decline" };
     }
     if (method === APPROVAL.fileChange) {
@@ -165,6 +176,7 @@ export class CodexBackend implements AgentBackend {
     return { decision: "decline" };
   }
 
+  // Paths come from codex's own file-change reports (codex runs sandboxed); symlink escape inside the project is accepted, this is not a hardened boundary.
   private allInsideProject(item: Json): boolean {
     const changes = (item as { changes?: Array<{ path?: unknown }> }).changes;
     if (!Array.isArray(changes) || changes.length === 0) return false; // unknown -> conservative: ask
