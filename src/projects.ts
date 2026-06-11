@@ -64,7 +64,7 @@ export function listProjects(claudeHome = defaultClaudeHome()): ProjectInfo[] {
     const newest = sessions[0];
     if (!newest) continue;
     const text = readSafe(newest.file);
-    const cwd = (text && cwdFromText(text)) || entry;
+    const cwd = (text !== null && cwdFromText(text)) || entry;
     out.push({
       path: cwd,
       name: basename(cwd),
