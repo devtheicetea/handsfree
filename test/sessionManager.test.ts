@@ -239,4 +239,30 @@ describe("sessionKey routing", () => {
     expect(started.every((s: any) => typeof s.sessionKey === "string" && s.sessionKey.length > 0)).toBe(true);
     expect(started.every((s: any) => "resumeId" in s && "agent" in s)).toBe(true); // all well-formed (no stale shape)
   });
+
+  it("re-sends history on reattach, before the buffer replay (restarted client is otherwise blank)", async () => {
+    const items = [{ role: "user" as const, text: "from laptop", tools: [] }];
+    const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => items };
+    const manager = new SessionManager({
+      safelist: [],
+      stores: { claude: emptyStore, codex: store },
+      makeSession: () => new Session(new FakeBackend()),
+    });
+    let key = "";
+    await manager.open("/p", "codex", "latest", "n1", (m) => { if (m.type === "session_started") key = (m as any).sessionKey; });
+    manager.route({ type: "prompt", sessionKey: key, text: "hi" } as any);
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The app restarts: fresh emit sink with no local state. The reattach must
+    // re-send the history snapshot (the client seeds it only when empty), and
+    // it must arrive BEFORE the replayed turn buffer.
+    const out: BridgeToClient[] = [];
+    await manager.open("/p", "codex", "latest", "n2", (m) => out.push(m));
+    const hist = out.find((m) => m.type === "history") as any;
+    expect(hist).toBeDefined();
+    expect(hist.items).toEqual(items);
+    expect(hist.sessionKey).toBe(key);
+    const types = out.map((m) => m.type);
+    expect(types.indexOf("history")).toBeLessThan(types.indexOf("response"));
+  });
 });

@@ -61,6 +61,11 @@ export class SessionManager {
       for (const [key, ls] of this.sessions) {
         if (ls.resumeId === resumeId && ls.session.isActive()) {
           emit({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId, mode: ls.policy.getMode() });
+          // The client may have restarted and lost all local state (it seeds
+          // history only into an empty conversation), so re-send the snapshot —
+          // and do it BEFORE reattach's buffer replay, or the replayed turn
+          // would make the conversation non-empty and the seed would be skipped.
+          this.tagged(key, emit)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
           ls.session.reattach(this.tagged(key, emit));
           return;
         }
