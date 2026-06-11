@@ -4,8 +4,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 import { BridgeServer } from "../src/server.js";
+import { Session } from "../src/session.js";
+import { CodexUnavailableError } from "../src/backends/codex.js";
+import { FakeBackend } from "./fakeBackend.js";
 import type { BridgeToClient } from "../src/protocol.js";
 import type { StartParams } from "../src/session.js";
+import type { SessionStore, StoreProject } from "../src/stores/types.js";
+import type { HistoryItem } from "../src/sessionHistory.js";
+
+/** Minimal in-memory SessionStore for server tests; override per-test as needed. */
+function fakeStore(over: Partial<SessionStore> = {}): SessionStore {
+  return {
+    listProjects: () => [],
+    resolveResume: (_p, resume) => (resume === "new" ? undefined : resume),
+    history: () => [],
+    ...over,
+  };
+}
 
 class FakeSession {
   emit: ((m: BridgeToClient) => void) | null = null;
@@ -272,5 +287,85 @@ describe("BridgeServer", () => {
     });
     ws.close();
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it("reports protocol version 0.2.0 in hello_ok", async () => {
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => new FakeSession() as any,
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    ws.send(JSON.stringify({ type: "hello" }));
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.2.0" });
+    ws.close();
+  });
+
+  it("rejects opening a codex session when the codex binary is unavailable", async () => {
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => new Session(new FakeBackend()),
+      stores: { claude: fakeStore(), codex: fakeStore() },
+      checkCodex: async () => { throw new CodexUnavailableError("cannot run codex"); },
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex" }));
+    const err = await waitFor(msgs, (m) => m.type === "error");
+    expect(err).toMatchObject({ type: "error", code: "codex_unavailable", agent: "codex" });
+    // No session_started must arrive for the failed preflight.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(msgs.find((m) => m.type === "session_started")).toBeUndefined();
+    ws.close();
+  });
+
+  it("serves per-agent history from the agent's own store", async () => {
+    const codexItem: HistoryItem = { role: "user", text: "from codex", tools: [] };
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => new Session(new FakeBackend()),
+      stores: {
+        claude: fakeStore({ history: () => [] }),
+        codex: fakeStore({ history: () => [codexItem] }),
+      },
+      checkCodex: async () => "codex 0.99.0",
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "latest", agent: "codex" }));
+    const hist = await waitFor(msgs, (m) => m.type === "history");
+    expect(hist).toMatchObject({ type: "history", agent: "codex", items: [codexItem] });
+    ws.close();
+  });
+
+  it("merges claude and codex projects into one entry per path", async () => {
+    const claudeProj: StoreProject = { path: "/p", lastSessionId: "c1", lastActive: 1, lastMessage: null };
+    const codexProj: StoreProject = { path: "/p", lastSessionId: "x1", lastActive: 2, lastMessage: null };
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => new Session(new FakeBackend()),
+      stores: {
+        claude: fakeStore({ listProjects: () => [claudeProj] }),
+        codex: fakeStore({ listProjects: () => [codexProj] }),
+      },
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    ws.send(JSON.stringify({ type: "list_projects" }));
+    const got = await waitFor(msgs, (m) => m.type === "projects") as Extract<BridgeToClient, { type: "projects" }>;
+    expect(got.projects).toHaveLength(1);
+    const [proj] = got.projects;
+    expect(proj!.agents.claude?.lastSessionId).toBe("c1");
+    expect(proj!.agents.codex?.lastSessionId).toBe("x1");
+    ws.close();
   });
 });

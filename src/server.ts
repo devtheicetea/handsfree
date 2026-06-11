@@ -2,26 +2,36 @@ import { WebSocketServer, WebSocket } from "ws";
 import { AddressInfo } from "node:net";
 import { parseClientMessage, encode, type BridgeToClient, type ClientMessage } from "./protocol.js";
 import { Session } from "./session.js";
-import { mergeProjects, listClaudeProjects, defaultClaudeHome, historyForProject } from "./projects.js";
+import { mergeProjects } from "./projects.js";
 import { SessionManager } from "./sessionManager.js";
+import { ClaudeStore } from "./stores/claude.js";
+import { CodexStore } from "./stores/codex.js";
+import { checkCodexAvailable } from "./backends/codex.js";
+import type { SessionStore } from "./stores/types.js";
+import type { AgentName } from "./backends/types.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const DISCONNECT_GRACE_MS = 120_000;
 const HISTORY_LIMIT = 25;
 
 export interface ServerDeps {
   config: Config;
-  makeSession?: () => Session;
-  claudeHome?: string;
+  makeSession?: (agent: AgentName, projectPath: string) => Session;
+  stores?: { claude: SessionStore; codex: SessionStore };
+  checkCodex?: (codexPath: string | null) => Promise<string>;
+  claudeHome?: string; // default ClaudeStore root
+  codexHome?: string; // default CodexStore root
   logger?: Logger;
 }
 
 export class BridgeServer {
   private wss: WebSocketServer | null = null;
   private readonly config: Config;
-  private readonly claudeHome: string;
+  private readonly stores: { claude: SessionStore; codex: SessionStore };
+  private readonly checkCodex: (codexPath: string | null) => Promise<string>;
+  private readonly codexPath: string | null;
   private client: WebSocket | null = null;
   // Single-client bridge (v1): one active client at a time. A second connection
   // is rejected as "busy" before it can reach open_session.
@@ -31,11 +41,15 @@ export class BridgeServer {
 
   constructor(deps: ServerDeps) {
     this.config = deps.config;
-    this.claudeHome = deps.claudeHome ?? defaultClaudeHome();
     this.logger = deps.logger;
+    this.stores = deps.stores ?? { claude: new ClaudeStore(deps.claudeHome), codex: new CodexStore(deps.codexHome) };
+    this.checkCodex = deps.checkCodex ?? checkCodexAvailable;
+    this.codexPath = (this.config as { codexPath?: string | null }).codexPath ?? null; // cast removed in config task
     this.sessions = new SessionManager({
       safelist: this.config.safelist,
       makeSession: deps.makeSession,
+      stores: this.stores,
+      codexPath: this.codexPath,
     });
   }
 
@@ -131,14 +145,23 @@ export class BridgeServer {
   private async route(ws: WebSocket, msg: ClientMessage): Promise<void> {
     switch (msg.type) {
       case "list_projects":
-        this.send(ws, { type: "projects", projects: mergeProjects(listClaudeProjects(this.claudeHome), []) });
+        this.send(ws, { type: "projects", projects: mergeProjects(this.stores.claude.listProjects(), this.stores.codex.listProjects()) });
         return;
       case "open_session": {
-        this.logger?.info("open_session", { projectPath: msg.projectPath, resume: msg.resume });
+        this.logger?.info("open_session", { projectPath: msg.projectPath, agent: msg.agent, resume: msg.resume });
+        if (msg.agent === "codex") {
+          try {
+            const version = await this.checkCodex(this.codexPath);
+            this.logger?.info("codex version", { version });
+          } catch (err) {
+            this.sendToClient({ type: "error", projectPath: msg.projectPath, agent: msg.agent, code: "codex_unavailable", message: String(err) });
+            return;
+          }
+        }
         // History first (the app replaces its message list with this snapshot),
         // then the live session attaches and streams new turns on top.
-        const items = historyForProject(this.claudeHome, msg.projectPath, msg.resume, HISTORY_LIMIT);
-        this.sendToClient({ type: "history", projectPath: msg.projectPath, items, agent: msg.agent });
+        const items = this.stores[msg.agent].history(msg.projectPath, msg.resume, HISTORY_LIMIT);
+        this.sendToClient({ type: "history", projectPath: msg.projectPath, agent: msg.agent, items });
         await this.sessions.open(msg.projectPath, msg.agent, msg.resume, (m) => this.sendToClient(m));
         return;
       }
@@ -147,7 +170,7 @@ export class BridgeServer {
       case "set_mode":
       case "permission_response": {
         const ok = this.sessions.route(msg);
-        if (!ok) this.send(ws, { type: "error", projectPath: msg.projectPath, code: "no_session", message: "open the project first" });
+        if (!ok) this.send(ws, { type: "error", projectPath: msg.projectPath, agent: msg.agent, code: "no_session", message: "open the project first" });
         return;
       }
       case "hello":
