@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listProjects, resolveResume } from "../src/projects.js";
+import { listProjects, resolveResume, historyForProject } from "../src/projects.js";
 
 let claudeHome: string;
 
@@ -77,6 +77,25 @@ describe("listProjects lastMessage preview", () => {
     writeFileSync(join(dir, "s1.jsonl"), JSON.stringify({ cwd: "/Users/me/x", type: "mode", value: "x" }) + "\n");
     const projects = listProjects(home);
     expect(projects[0]!.lastMessage).toBeNull();
+    rmSync(home, { recursive: true, force: true });
+  });
+});
+
+describe("historyForProject", () => {
+  it("returns parsed turns for the matching project, [] for resume=new", () => {
+    const home = mkdtempSync(join(tmpdir(), "claude-home-h-"));
+    const dir = join(home, "projects", "-Users-me-app");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "ping" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "pong" }] } }),
+    ].join("\n") + "\n");
+    expect(historyForProject(home, "/Users/me/app", "latest", 25)).toEqual([
+      { role: "user", text: "ping", tools: [] },
+      { role: "assistant", text: "pong", tools: [] },
+    ]);
+    expect(historyForProject(home, "/Users/me/app", "new", 25)).toEqual([]);
+    expect(historyForProject(home, "/Users/me/nope", "latest", 25)).toEqual([]);
     rmSync(home, { recursive: true, force: true });
   });
 });

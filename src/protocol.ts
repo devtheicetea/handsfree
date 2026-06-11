@@ -54,6 +54,7 @@ export type BridgeToClient =
   | { type: "status"; projectPath: string; state: "thinking" | "idle" | "error" }
   | { type: "response"; projectPath: string; turn: number; text: string; done: boolean }
   | { type: "permission_request"; projectPath: string; id: string; tool: string; input: unknown; detail: string }
+  | { type: "history"; projectPath: string; items: HistoryItem[] }
   | { type: "error"; projectPath?: string; code: string; message: string };
 
 // ---------- parsing ----------
