@@ -44,7 +44,7 @@ export class BridgeServer {
     this.logger = deps.logger;
     this.stores = deps.stores ?? { claude: new ClaudeStore(deps.claudeHome), codex: new CodexStore(deps.codexHome) };
     this.checkCodex = deps.checkCodex ?? checkCodexAvailable;
-    this.codexPath = (this.config as { codexPath?: string | null }).codexPath ?? null; // cast removed in config task
+    this.codexPath = this.config.codexPath;
     this.sessions = new SessionManager({
       safelist: this.config.safelist,
       makeSession: deps.makeSession,

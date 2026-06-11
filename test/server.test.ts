@@ -72,7 +72,7 @@ describe("BridgeServer", () => {
   it("accepts hello and routes a prompt through the session", async () => {
     const fake = new FakeSession();
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: ["Read"] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: ["Read"], codexPath: null },
       makeSession: () => fake as any,
     });
     const port = await server.listen();
@@ -93,7 +93,7 @@ describe("BridgeServer", () => {
     const fake = new FakeSession();
     let made = 0;
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => { made++; return fake as any; },
     });
     const port = await server.listen();
@@ -115,7 +115,7 @@ describe("BridgeServer", () => {
 
   it("rejects a bad token", async () => {
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: "secret", safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: "secret", safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
     });
     const port = await server.listen();
@@ -129,7 +129,7 @@ describe("BridgeServer", () => {
   it("auto-reattaches on hello when a session is live", async () => {
     const fake = new FakeSession();
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => fake as any,
     });
     const port = await server.listen();
@@ -155,7 +155,7 @@ describe("BridgeServer", () => {
   it("routes a permission request to the reconnected client after reattach", async () => {
     const fake = new FakeSession();
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] }, // empty safelist => Bash asks
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null }, // empty safelist => Bash asks
       makeSession: () => fake as any,
     });
     const port = await server.listen();
@@ -194,7 +194,7 @@ describe("BridgeServer", () => {
       reattach() {}
     }
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new CrashSession() as any,
     });
     const port = await server.listen();
@@ -219,7 +219,7 @@ describe("BridgeServer", () => {
   it("runs two projects concurrently with tagged output over one socket", async () => {
     const made: any[] = [];
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => { const f = new FakeSession(); made.push(f); return f as any; },
     });
     const port = await server.listen();
@@ -241,7 +241,7 @@ describe("BridgeServer", () => {
 
   it("rejects a second concurrent client as busy", async () => {
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
     });
     const port = await server.listen();
@@ -266,7 +266,7 @@ describe("BridgeServer", () => {
 
     const fake = new FakeSession();
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => fake as any,
       claudeHome: home,
     });
@@ -291,7 +291,7 @@ describe("BridgeServer", () => {
 
   it("reports protocol version 0.2.0 in hello_ok", async () => {
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
     });
     const port = await server.listen();
@@ -303,7 +303,7 @@ describe("BridgeServer", () => {
 
   it("rejects opening a codex session when the codex binary is unavailable", async () => {
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new Session(new FakeBackend()),
       stores: { claude: fakeStore(), codex: fakeStore() },
       checkCodex: async () => { throw new CodexUnavailableError("cannot run codex"); },
@@ -325,7 +325,7 @@ describe("BridgeServer", () => {
   it("serves per-agent history from the agent's own store", async () => {
     const codexItem: HistoryItem = { role: "user", text: "from codex", tools: [] };
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new Session(new FakeBackend()),
       stores: {
         claude: fakeStore({ history: () => [] }),
@@ -349,7 +349,7 @@ describe("BridgeServer", () => {
     const fake = new FakeSession();
     let made = 0;
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => { made++; return fake as any; },
       stores: { claude: fakeStore(), codex: fakeStore() },
       checkCodex: async () => {
@@ -386,7 +386,7 @@ describe("BridgeServer", () => {
     const claudeProj: StoreProject = { path: "/p", lastSessionId: "c1", lastActive: 1, lastMessage: null };
     const codexProj: StoreProject = { path: "/p", lastSessionId: "x1", lastActive: 2, lastMessage: null };
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new Session(new FakeBackend()),
       stores: {
         claude: fakeStore({ listProjects: () => [claudeProj] }),

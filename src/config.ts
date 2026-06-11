@@ -1,10 +1,12 @@
-export const DEFAULT_SAFELIST = ["Read", "Grep", "Glob", "LS", "TodoWrite"] as const;
+export const DEFAULT_SAFELIST = ["Read", "Grep", "Glob", "LS", "TodoWrite", "CodexApplyPatch"] as const;
 
 export interface Config {
   port: number;
   bindAddress: string;
   token: string | null;
   safelist: string[];
+  /** Path to the codex binary; null = resolve `codex` from PATH. */
+  codexPath: string | null;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -20,5 +22,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     bindAddress: env.HANDSFREE_BIND ?? "0.0.0.0",
     token: env.HANDSFREE_TOKEN ?? null,
     safelist,
+    codexPath: env.HANDSFREE_CODEX_PATH ?? null,
   };
 }

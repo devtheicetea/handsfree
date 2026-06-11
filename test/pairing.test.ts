@@ -35,7 +35,7 @@ describe("printPairing", () => {
   it("emits the connect URL line, resolving the host from deps", () => {
     let out = "";
     printPairing(
-      { port: 8744, token: null, bindAddress: "0.0.0.0", safelist: [] },
+      { port: 8744, token: null, bindAddress: "0.0.0.0", safelist: [], codexPath: null },
       { tailscaleIP: () => "100.9.8.7", lanIP: () => null },
       (s) => { out += s; },
       {}, // empty env -> no HANDSFREE_HOST override

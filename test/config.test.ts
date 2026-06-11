@@ -30,4 +30,13 @@ describe("loadConfig", () => {
   it("throws on an out-of-range port", () => {
     expect(() => loadConfig({ HANDSFREE_PORT: "70000" })).toThrow();
   });
+
+  it("reads HANDSFREE_CODEX_PATH, defaulting to null (use PATH)", () => {
+    expect(loadConfig({}).codexPath).toBeNull();
+    expect(loadConfig({ HANDSFREE_CODEX_PATH: "/opt/codex" }).codexPath).toBe("/opt/codex");
+  });
+
+  it("safelists CodexApplyPatch by default so in-project codex patches auto-allow", () => {
+    expect(loadConfig({}).safelist).toContain("CodexApplyPatch");
+  });
 });
