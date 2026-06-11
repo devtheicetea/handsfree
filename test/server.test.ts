@@ -1,4 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WebSocket } from "ws";
 import { BridgeServer } from "../src/server.js";
 import type { BridgeToClient } from "../src/protocol.js";
@@ -235,5 +238,39 @@ describe("BridgeServer", () => {
     const msg = await next(b);
     expect(msg).toMatchObject({ type: "error", code: "busy" });
     a.close(); b.close();
+  });
+
+  it("sends conversation history on open_session", async () => {
+    const home = mkdtempSync(join(tmpdir(), "srv-home-"));
+    const dir = join(home, "projects", "-Users-me-app");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "hi" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "yo" }] } }),
+    ].join("\n") + "\n");
+
+    const fake = new FakeSession();
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => fake as any,
+      claudeHome: home,
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/Users/me/app", resume: "latest" }));
+    const hist = await waitFor(msgs, (m) => m.type === "history");
+    expect(hist).toMatchObject({
+      type: "history",
+      projectPath: "/Users/me/app",
+      items: [
+        { role: "user", text: "hi", tools: [] },
+        { role: "assistant", text: "yo", tools: [] },
+      ],
+    });
+    ws.close();
+    rmSync(home, { recursive: true, force: true });
   });
 });

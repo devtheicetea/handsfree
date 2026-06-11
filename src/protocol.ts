@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { HistoryItem } from "./sessionHistory.js";
 
 // ---------- client -> bridge ----------
 export const helloSchema = z.object({ type: z.literal("hello"), token: z.string().optional() });
@@ -41,6 +42,7 @@ export type ProjectInfo = {
   name: string;
   lastSessionId: string | null;
   lastActive: number | null;
+  lastMessage: HistoryItem | null;
 };
 
 export type BridgeToClient =
@@ -52,6 +54,7 @@ export type BridgeToClient =
   | { type: "status"; projectPath: string; state: "thinking" | "idle" | "error" }
   | { type: "response"; projectPath: string; turn: number; text: string; done: boolean }
   | { type: "permission_request"; projectPath: string; id: string; tool: string; input: unknown; detail: string }
+  | { type: "history"; projectPath: string; items: HistoryItem[] }
   | { type: "error"; projectPath?: string; code: string; message: string };
 
 // ---------- parsing ----------

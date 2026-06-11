@@ -2,13 +2,14 @@ import { WebSocketServer, WebSocket } from "ws";
 import { AddressInfo } from "node:net";
 import { parseClientMessage, encode, type BridgeToClient, type ClientMessage } from "./protocol.js";
 import { Session } from "./session.js";
-import { listProjects, defaultClaudeHome } from "./projects.js";
+import { listProjects, defaultClaudeHome, historyForProject } from "./projects.js";
 import { SessionManager } from "./sessionManager.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
 const VERSION = "0.1.0";
 const DISCONNECT_GRACE_MS = 120_000;
+const HISTORY_LIMIT = 25;
 
 export interface ServerDeps {
   config: Config;
@@ -133,10 +134,15 @@ export class BridgeServer {
       case "list_projects":
         this.send(ws, { type: "projects", projects: listProjects(this.claudeHome) });
         return;
-      case "open_session":
+      case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, resume: msg.resume });
+        // History first (the app replaces its message list with this snapshot),
+        // then the live session attaches and streams new turns on top.
+        const items = historyForProject(this.claudeHome, msg.projectPath, msg.resume, HISTORY_LIMIT);
+        this.sendToClient({ type: "history", projectPath: msg.projectPath, items });
         await this.sessions.open(msg.projectPath, msg.resume, (m) => this.sendToClient(m));
         return;
+      }
       case "prompt":
       case "abort":
       case "set_mode":
