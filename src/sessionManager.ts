@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Session } from "./session.js";
 import { PermissionPolicy } from "./permissions.js";
 import { ClaudeBackend } from "./backends/claude.js";
@@ -8,9 +9,13 @@ import { ClaudeStore } from "./stores/claude.js";
 import { CodexStore } from "./stores/codex.js";
 import type { BridgeToClient, ClientMessage } from "./protocol.js";
 
-interface ProjectSession {
+const HISTORY_LIMIT = 25;
+
+interface LiveSession {
   session: Session;
   policy: PermissionPolicy;
+  projectPath: string;
+  agent: AgentName;
   resumeId: string | null;
 }
 
@@ -21,16 +26,13 @@ export interface SessionManagerDeps {
   codexPath?: string | null;
 }
 
-/** Paths may contain spaces but never NUL, so NUL-join is collision-free. */
-const keyOf = (projectPath: string, agent: AgentName) => `${projectPath}\u0000${agent}`;
-
 /**
- * Owns one live Session per (project, agent). All sessions stay alive (none
- * stopped on switch); every session's output is tagged with its projectPath
- * AND agent before reaching the client. Input messages are routed by both.
+ * Owns one live Session per sessionKey (UUID). All sessions stay alive (none
+ * stopped on switch); every session's output is tagged with its sessionKey
+ * before reaching the client. Input messages are routed by sessionKey.
  */
 export class SessionManager {
-  private readonly sessions = new Map<string, ProjectSession>();
+  private readonly sessions = new Map<string, LiveSession>();
   private readonly safelist: string[];
   private readonly makeSession: (agent: AgentName, projectPath: string) => Session;
   private readonly stores: { claude: SessionStore; codex: SessionStore };
@@ -45,65 +47,62 @@ export class SessionManager {
     this.stores = deps.stores ?? { claude: new ClaudeStore(), codex: new CodexStore() };
   }
 
-  /** Wrap a session's emit so every message is tagged with project AND agent. */
-  private tagged(projectPath: string, agent: AgentName, emit: (m: BridgeToClient) => void) {
-    return (m: BridgeToClient) => emit({ ...m, projectPath, agent } as BridgeToClient);
+  /** Wrap a session's emit so every message is tagged with its sessionKey. */
+  private tagged(sessionKey: string, emit: (m: BridgeToClient) => void) {
+    return (m: BridgeToClient) => emit({ ...m, sessionKey } as BridgeToClient);
   }
 
-  async open(projectPath: string, agent: AgentName, resume: string, emit: (m: BridgeToClient) => void): Promise<void> {
-    const key = keyOf(projectPath, agent);
-    const existing = this.sessions.get(key);
-    if (existing && existing.session.isActive()) {
-      existing.session.reattach(this.tagged(projectPath, agent, emit));
-      return;
-    }
+  async open(projectPath: string, agent: AgentName, resume: string, nonce: string, emit: (m: BridgeToClient) => void): Promise<void> {
     const resumeId = this.stores[agent].resolveResume(projectPath, resume) ?? null;
+    if (resumeId) {
+      for (const [key, ls] of this.sessions) {
+        if (ls.resumeId === resumeId && ls.session.isActive()) {
+          emit({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId, mode: ls.policy.getMode() });
+          ls.session.reattach(this.tagged(key, emit));
+          return;
+        }
+      }
+    }
+    const sessionKey = randomUUID();
     const policy = new PermissionPolicy(this.safelist, (req) =>
-      this.tagged(projectPath, agent, emit)({
-        type: "permission_request",
-        id: req.id, tool: req.tool, input: req.input,
-        detail: req.input && typeof req.input === "object"
-          ? `${req.tool} ${JSON.stringify(req.input).slice(0, 180)}` : req.tool,
-      } as BridgeToClient),
-    );
+      this.tagged(sessionKey, emit)({
+        type: "permission_request", id: req.id, tool: req.tool, input: req.input,
+        detail: req.input && typeof req.input === "object" ? `${req.tool} ${JSON.stringify(req.input).slice(0, 180)}` : req.tool,
+      } as BridgeToClient));
     const session = this.makeSession(agent, projectPath);
-    this.sessions.set(key, { session, policy, resumeId });
-    await session.start({
-      projectPath,
-      resume: resumeId ?? undefined,
-      policy,
-      emit: this.tagged(projectPath, agent, emit),
-    });
+    this.sessions.set(sessionKey, { session, policy, projectPath, agent, resumeId });
+    emit({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
+    // History snapshot (the app seeds an empty conversation with this); tagged by this session's key.
+    this.tagged(sessionKey, emit)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
+    await session.start({ projectPath, resume: resumeId ?? undefined, policy, emit: this.tagged(sessionKey, emit) });
   }
 
   /** Replay every live session's current state to a (re)connected client. */
   reattachAll(emit: (m: BridgeToClient) => void): void {
-    for (const [key, ps] of this.sessions) {
-      if (!ps.session.isActive()) continue;
-      const [projectPath, agent] = key.split("\u0000") as [string, AgentName];
-      ps.session.reattach(this.tagged(projectPath, agent, emit));
+    for (const [key, ls] of this.sessions) {
+      if (ls.session.isActive()) ls.session.reattach(this.tagged(key, emit));
     }
   }
 
-  /** Route a per-project client message to its (project, agent) session/policy. */
-  route(msg: Extract<ClientMessage, { projectPath: string }> & { agent: AgentName }): boolean {
-    const ps = this.sessions.get(keyOf(msg.projectPath, msg.agent));
-    if (!ps) return false;
+  /** Route a session-scoped client message to its session/policy by sessionKey. */
+  route(msg: Extract<ClientMessage, { sessionKey: string }>): boolean {
+    const ls = this.sessions.get(msg.sessionKey);
+    if (!ls) return false;
     switch (msg.type) {
-      case "prompt": ps.session.prompt(msg.text); return true;
-      case "abort": ps.session.abortTurn(); ps.policy.abortAll(); return true;
-      case "set_mode": ps.policy.setMode(msg.mode); return true;
-      case "permission_response": ps.policy.resolve(msg.id, msg.decision); return true;
+      case "prompt": ls.session.prompt(msg.text); return true;
+      case "abort": ls.session.abortTurn(); ls.policy.abortAll(); return true;
+      case "set_mode": ls.policy.setMode(msg.mode); return true;
+      case "permission_response": ls.policy.resolve(msg.id, msg.decision); return true;
       default: return false;
     }
   }
 
-  has(projectPath: string, agent: AgentName): boolean {
-    return this.sessions.get(keyOf(projectPath, agent))?.session.isActive() ?? false;
+  has(sessionKey: string): boolean {
+    return this.sessions.get(sessionKey)?.session.isActive() ?? false;
   }
 
   async stopAll(): Promise<void> {
-    await Promise.all([...this.sessions.values()].map((ps) => ps.session.stop()));
+    await Promise.all([...this.sessions.values()].map((ls) => ls.session.stop()));
     this.sessions.clear();
   }
 }

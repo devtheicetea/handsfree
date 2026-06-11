@@ -75,10 +75,6 @@ export class Session {
       }
     })();
 
-    // Signal readiness immediately so the client can send its first prompt. For a
-    // resumed session we know the id up front; for a new session the real id is
-    // learned from the backend's session_id event (sessionId stays "" here).
-    this.send({ type: "session_started", sessionId: resume ?? "", projectPath, mode: policy.getMode() } as any);
   }
 
   prompt(text: string): void {

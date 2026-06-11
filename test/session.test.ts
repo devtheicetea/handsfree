@@ -9,13 +9,14 @@ const policy =(ask: (req: { id: string; tool: string; input: unknown }) => void 
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
 describe("Session (backend-agnostic shell)", () => {
-  it("emits session_started immediately and streams responses with status transitions", async () => {
+  it("streams responses with status transitions (session_started is now emitted by SessionManager, not Session)", async () => {
     const emitted: BridgeToClient[] = [];
     const session = new Session(new FakeBackend());
     await session.start({ projectPath: "/x", resume: undefined, policy: policy(), emit: (m) => emitted.push(m) });
     session.prompt("hi");
     await tick();
-    expect(emitted.find((m) => m.type === "session_started")).toMatchObject({ sessionId: "", projectPath: "/x" });
+    // session_started is no longer emitted by Session.start() — the manager emits it before calling start().
+    expect(emitted.find((m) => m.type === "session_started")).toBeUndefined();
     const responses = emitted.filter((m) => m.type === "response") as Array<{ text: string; done: boolean; turn: number }>;
     expect(responses.some((r) => r.text === "echo:hi" && !r.done && r.turn === 1)).toBe(true);
     expect(responses.some((r) => r.done)).toBe(true);
