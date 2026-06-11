@@ -22,6 +22,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     bindAddress: env.HANDSFREE_BIND ?? "0.0.0.0",
     token: env.HANDSFREE_TOKEN ?? null,
     safelist,
-    codexPath: env.HANDSFREE_CODEX_PATH ?? null,
+    codexPath: env.HANDSFREE_CODEX_PATH?.trim() || null,
   };
 }

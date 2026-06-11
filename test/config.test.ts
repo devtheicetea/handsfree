@@ -36,6 +36,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ HANDSFREE_CODEX_PATH: "/opt/codex" }).codexPath).toBe("/opt/codex");
   });
 
+  it("treats empty HANDSFREE_CODEX_PATH as null (use PATH)", () => {
+    expect(loadConfig({ HANDSFREE_CODEX_PATH: "" }).codexPath).toBeNull();
+    expect(loadConfig({ HANDSFREE_CODEX_PATH: "   " }).codexPath).toBeNull();
+  });
+
   it("safelists CodexApplyPatch by default so in-project codex patches auto-allow", () => {
     expect(loadConfig({}).safelist).toContain("CodexApplyPatch");
   });
