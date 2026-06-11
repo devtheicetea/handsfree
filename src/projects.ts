@@ -3,7 +3,7 @@ import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import type { AgentName } from "./backends/types.js";
 import type { ProjectInfo } from "./protocol.js";
-import type { StoreProject } from "./stores/types.js";
+import type { StoreProject, SessionMeta } from "./stores/types.js";
 import { lastTurn, parseHistory, type HistoryItem } from "./sessionHistory.js";
 
 export function defaultClaudeHome(): string {
@@ -151,4 +151,41 @@ export function resolveResume(
     return match?.lastSessionId ?? undefined;
   }
   return resume;
+}
+
+/** The session's display title: ai-title -> first real user prompt (<=60) -> "Untitled". */
+export function titleFrom(jsonlText: string): string {
+  let firstUser: string | null = null;
+  for (const raw of jsonlText.split("\n")) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    let o: { type?: string; value?: unknown; message?: { content?: unknown } };
+    try { o = JSON.parse(trimmed); } catch { continue; }
+    if (o.type === "ai-title" && typeof o.value === "string" && o.value.trim()) return o.value.trim();
+    if (firstUser === null && o.type === "user") {
+      const c = o.message?.content;
+      if (typeof c === "string" && c.trim()) firstUser = c.trim();
+      else if (Array.isArray(c)) {
+        const t = (c as Array<{ type?: string; text?: string }>).find((b) => b?.type === "text" && b.text)?.text;
+        if (t && t.trim()) firstUser = t.trim();
+      }
+    }
+  }
+  if (firstUser) return firstUser.length > 60 ? firstUser.slice(0, 60) + "…" : firstUser;
+  return "Untitled";
+}
+
+/** All sessions for a Claude project folder, newest-first. */
+export function listSessionsFor(claudeHome: string, projectPath: string): SessionMeta[] {
+  const projectsRoot = join(claudeHome, "projects");
+  if (!existsSync(projectsRoot)) return [];
+  for (const entry of readdirSync(projectsRoot)) {
+    const scan = scanProjectDir(projectsRoot, entry);
+    if (!scan || scan.cwd !== projectPath) continue;
+    return scan.sessions.map((s) => {
+      const text = readSafe(s.file) ?? "";
+      return { sessionId: s.sessionId, lastActive: s.mtimeMs, title: titleFrom(text), preview: previewFrom(text) };
+    });
+  }
+  return [];
 }

@@ -16,6 +16,7 @@ import type { HistoryItem } from "../src/sessionHistory.js";
 function fakeStore(over: Partial<SessionStore> = {}): SessionStore {
   return {
     listProjects: () => [],
+    listSessions: () => [],
     resolveResume: (_p, resume) => (resume === "new" ? undefined : resume),
     history: () => [],
     ...over,

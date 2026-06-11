@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { HistoryItem } from "../sessionHistory.js";
-import { type SessionStore, type StoreProject, truncatePreview } from "./types.js";
+import { type SessionStore, type SessionMeta, type StoreProject, truncatePreview } from "./types.js";
 
 export function defaultCodexHome(): string {
   return join(homedir(), ".codex");
@@ -112,6 +112,40 @@ export class CodexStore implements SessionStore {
       out.push({ threadId: p.id, cwd: p.cwd, mtimeMs, text });
     }
     return out;
+  }
+
+  /** Extract a display title from a codex rollout: first real user prompt (<=60) -> "Untitled". */
+  private titleFrom(text: string): string {
+    for (const raw of text.split("\n")) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      let o: CodexLine;
+      try { o = JSON.parse(trimmed) as CodexLine; } catch { continue; }
+      if (o.type !== "response_item" || !o.payload) continue;
+      const p = o.payload;
+      if (p.type === "message" && p.role === "user") {
+        const t = blockText(p.content, "input_text");
+        if (t === null || SKIP_USER_PREFIXES.some((s) => t.startsWith(s))) continue;
+        const trimmedT = t.trim();
+        if (!trimmedT) continue;
+        return trimmedT.length > 60 ? trimmedT.slice(0, 60) + "…" : trimmedT;
+      }
+    }
+    return "Untitled";
+  }
+
+  listSessions(projectPath: string): SessionMeta[] {
+    return this.scan()
+      .filter((s) => s.cwd === projectPath)
+      .map((s) => {
+        const turns = parseCodexHistory(s.text, 1);
+        return {
+          sessionId: s.threadId,
+          lastActive: s.mtimeMs,
+          title: this.titleFrom(s.text),
+          preview: truncatePreview(turns.length ? turns[turns.length - 1]! : null),
+        };
+      });
   }
 
   listProjects(): StoreProject[] {

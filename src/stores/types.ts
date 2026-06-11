@@ -8,9 +8,18 @@ export interface StoreProject {
   lastMessage: HistoryItem | null;
 }
 
+/** One discoverable session for a project (newest-first in listings). */
+export interface SessionMeta {
+  sessionId: string;        // the real on-disk session id (the resume target)
+  lastActive: number;       // mtime ms
+  title: string;            // ai-title -> first user prompt -> "Untitled"
+  preview: HistoryItem | null;
+}
+
 /** Discovery / resume-resolution / history for one agent's on-disk sessions. */
 export interface SessionStore {
   listProjects(): StoreProject[];
+  listSessions(projectPath: string): SessionMeta[];
   resolveResume(projectPath: string, resume: "latest" | "new" | string): string | undefined;
   history(projectPath: string, resume: string, limit: number): HistoryItem[];
 }

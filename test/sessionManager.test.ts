@@ -10,7 +10,7 @@ import type { StartParams } from "../src/session.js";
 import type { SessionStore } from "../src/stores/types.js";
 import { FakeBackend } from "./fakeBackend.js";
 
-const emptyStore: SessionStore = { listProjects: () => [], resolveResume: () => undefined, history: () => [] };
+const emptyStore: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => undefined, history: () => [] };
 
 class FakeSession {
   started: StartParams | null = null;
@@ -159,6 +159,7 @@ describe("SessionManager", () => {
     const calls: string[] = [];
     const store = (tag: string): SessionStore => ({
       listProjects: () => [],
+      listSessions: () => [],
       resolveResume: (p, r) => { calls.push(`${tag}:${p}:${r}`); return undefined; },
       history: () => [],
     });

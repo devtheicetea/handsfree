@@ -1,12 +1,16 @@
-import { listClaudeProjects, historyForProject, resolveResume, defaultClaudeHome } from "../projects.js";
+import { listClaudeProjects, historyForProject, resolveResume, defaultClaudeHome, listSessionsFor } from "../projects.js";
 import type { HistoryItem } from "../sessionHistory.js";
-import type { SessionStore, StoreProject } from "./types.js";
+import type { SessionStore, SessionMeta, StoreProject } from "./types.js";
 
 export class ClaudeStore implements SessionStore {
   constructor(private readonly claudeHome = defaultClaudeHome()) {}
 
   listProjects(): StoreProject[] {
     return listClaudeProjects(this.claudeHome);
+  }
+
+  listSessions(projectPath: string): SessionMeta[] {
+    return listSessionsFor(this.claudeHome, projectPath);
   }
 
   resolveResume(projectPath: string, resume: "latest" | "new" | string): string | undefined {
