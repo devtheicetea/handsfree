@@ -24,6 +24,11 @@ export const permissionResponseSchema = z.object({
 });
 export const setModeSchema = z.object({ type: z.literal("set_mode"), sessionKey: z.string().min(1), mode: z.enum(["safelist", "ask_all", "auto"]) });
 export const abortSchema = z.object({ type: z.literal("abort"), sessionKey: z.string().min(1) });
+// v0.4.0 mirroring: view = history snapshot + live watch (no bridge session).
+export const viewSessionSchema = z.object({
+  type: z.literal("view_session"), projectPath: z.string().min(1), agent: agentSchema, sessionId: z.string().min(1),
+});
+export const unviewSessionSchema = z.object({ type: z.literal("unview_session") });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
@@ -34,6 +39,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   permissionResponseSchema,
   setModeSchema,
   abortSchema,
+  viewSessionSchema,
+  unviewSessionSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -61,6 +68,10 @@ export type BridgeToClient =
   | { type: "response"; sessionKey: string; turn: number; text: string; done: boolean }
   | { type: "permission_request"; sessionKey: string; id: string; tool: string; input: unknown; detail: string }
   | { type: "history"; sessionKey: string; items: HistoryItem[] }
+  // v0.4.0 mirroring (no sessionKey — these address sessions by (agent, sessionId)):
+  | { type: "session_history"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[] }
+  | { type: "external_turns"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[] }
+  | { type: "session_activity"; projectPath: string; agent: AgentName; sessionId: string; lastActive: number; preview: HistoryItem | null }
   | { type: "error"; sessionKey?: string; code: string; message: string };
 
 // ---------- parsing ----------

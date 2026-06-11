@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseClientMessage, type BridgeToClient } from "../src/protocol.js";
+import { parseClientMessage, encode, type BridgeToClient } from "../src/protocol.js";
 import { mergeProjects } from "../src/projects.js";
 
 describe("Phase 3 tagged client messages", () => {
@@ -92,6 +92,27 @@ describe("v0.3.0 client messages", () => {
   it("rejects open_session without nonce", () => {
     const r = parseClientMessage(JSON.stringify({ type: "open_session", projectPath: "/p", agent: "claude", resume: "new" }));
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("v0.4.0 mirroring messages", () => {
+  it("parses view_session and unview_session", () => {
+    const v = parseClientMessage(JSON.stringify({ type: "view_session", projectPath: "/p", agent: "codex", sessionId: "thr_1" }));
+    expect(v.ok && v.value.type === "view_session").toBe(true);
+    const u = parseClientMessage(JSON.stringify({ type: "unview_session" }));
+    expect(u.ok && u.value.type === "unview_session").toBe(true);
+    expect(parseClientMessage(JSON.stringify({ type: "view_session", projectPath: "/p", agent: "codex" })).ok).toBe(false); // sessionId required
+  });
+
+  it("encodes the three new server messages", () => {
+    const item = { role: "user" as const, text: "hi", tools: [] };
+    for (const msg of [
+      { type: "session_history", projectPath: "/p", agent: "codex", sessionId: "s", items: [item] },
+      { type: "external_turns", projectPath: "/p", agent: "codex", sessionId: "s", items: [item] },
+      { type: "session_activity", projectPath: "/p", agent: "claude", sessionId: "s", lastActive: 5, preview: item },
+    ] as const) {
+      expect(JSON.parse(encode(msg as any)).type).toBe(msg.type);
+    }
   });
 });
 
