@@ -11,6 +11,7 @@ import type { BridgeToClient } from "../src/protocol.js";
 import type { StartParams } from "../src/session.js";
 import type { SessionStore, StoreProject } from "../src/stores/types.js";
 import type { HistoryItem } from "../src/sessionHistory.js";
+import type { SessionWatcherDeps } from "../src/watcher.js";
 
 /** Minimal in-memory SessionStore for server tests; override per-test as needed. */
 function fakeStore(over: Partial<SessionStore> = {}): SessionStore {
@@ -294,7 +295,7 @@ describe("BridgeServer", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it("reports protocol version 0.3.0 in hello_ok", async () => {
+  it("reports protocol version 0.4.0 in hello_ok", async () => {
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
@@ -302,8 +303,58 @@ describe("BridgeServer", () => {
     const port = await server.listen();
     const ws = await connect(port);
     ws.send(JSON.stringify({ type: "hello" }));
-    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.3.0" });
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.4.0" });
     ws.close();
+  });
+
+  it("view_session snapshots history, registers the watch, and routes watcher events per ownership", async () => {
+    let watcherDeps: SessionWatcherDeps | null = null;
+    let starts = 0;
+    let stops = 0;
+    const item: HistoryItem = { role: "user", text: "from laptop", tools: [] };
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
+      makeSession: () => new FakeSession() as any,
+      stores: { claude: fakeStore(), codex: fakeStore({ history: () => [item] }) },
+      makeWatcher: (d) => { watcherDeps = d; return { start: () => { starts++; }, stop: () => { stops++; } } as any; },
+    });
+    const port = await server.listen();
+    expect(starts).toBe(1); // watcher runs with the server
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+
+    ws.send(JSON.stringify({ type: "view_session", projectPath: "/p", agent: "codex", sessionId: "thr_1" }));
+    const hist = await waitFor(msgs, (m) => m.type === "session_history");
+    expect(hist).toMatchObject({ projectPath: "/p", agent: "codex", sessionId: "thr_1", items: [item] });
+
+    // watched + un-owned -> external_turns AND session_activity (with preview)
+    watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_1", items: [item], lastActive: 7, owned: false });
+    await waitFor(msgs, (m) => m.type === "external_turns" && (m as any).sessionId === "thr_1");
+    const act = await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 7);
+    expect((act as any).preview).toMatchObject({ text: "from laptop" });
+
+    // a different (unwatched) session -> session_activity only
+    watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_2", items: [item], lastActive: 8, owned: false });
+    await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).sessionId === "thr_2");
+    expect(msgs.some((m) => m.type === "external_turns" && (m as any).sessionId === "thr_2")).toBe(false);
+
+    // owned (bridge-authored) -> no external_turns echo even when watched
+    watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_1", items: [item], lastActive: 9, owned: true });
+    await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 9);
+    expect(msgs.filter((m) => m.type === "external_turns")).toHaveLength(1);
+
+    // unview clears the watch -> session_activity only from then on
+    ws.send(JSON.stringify({ type: "unview_session" }));
+    await new Promise((r) => setTimeout(r, 30));
+    watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_1", items: [item], lastActive: 10, owned: false });
+    await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 10);
+    expect(msgs.filter((m) => m.type === "external_turns")).toHaveLength(1);
+
+    ws.close();
+    await server.close();
+    expect(stops).toBeGreaterThan(0); // watcher stops with the server
   });
 
   it("rejects opening a codex session when the codex binary is unavailable", async () => {

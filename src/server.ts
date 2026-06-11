@@ -7,13 +7,15 @@ import { SessionManager } from "./sessionManager.js";
 import { ClaudeStore } from "./stores/claude.js";
 import { CodexStore } from "./stores/codex.js";
 import { checkCodexAvailable } from "./backends/codex.js";
+import { SessionWatcher, type SessionWatcherDeps, type WatcherEvent } from "./watcher.js";
 import type { SessionStore } from "./stores/types.js";
 import type { AgentName } from "./backends/types.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const DISCONNECT_GRACE_MS = 120_000;
+const HISTORY_LIMIT = 25; // turns per view_session snapshot (matches the manager's open snapshot)
 
 export interface ServerDeps {
   config: Config;
@@ -22,6 +24,7 @@ export interface ServerDeps {
   checkCodex?: (codexPath: string | null) => Promise<string>;
   claudeHome?: string; // default ClaudeStore root
   codexHome?: string; // default CodexStore root
+  makeWatcher?: (deps: SessionWatcherDeps) => Pick<SessionWatcher, "start" | "stop">;
   logger?: Logger;
 }
 
@@ -37,6 +40,9 @@ export class BridgeServer {
   private readonly sessions: SessionManager;
   private disconnectTimer: NodeJS.Timeout | null = null;
   private readonly logger?: Logger;
+  private readonly watcher: Pick<SessionWatcher, "start" | "stop">;
+  /** The one session the client is mirroring (v0.4.0); null = none. */
+  private watched: { agent: AgentName; sessionId: string } | null = null;
 
   constructor(deps: ServerDeps) {
     this.config = deps.config;
@@ -50,6 +56,24 @@ export class BridgeServer {
       stores: this.stores,
       codexPath: this.codexPath,
     });
+    this.watcher = (deps.makeWatcher ?? ((d) => new SessionWatcher(d)))({
+      claudeHome: deps.claudeHome,
+      codexHome: deps.codexHome,
+      ownsSession: (agent, id) => this.sessions.ownsSession(agent, id),
+      onEvent: (e) => this.onWatcherEvent(e),
+      log: (m) => this.logger?.info(m),
+    });
+  }
+
+  /** Route laptop-side file activity: full turns to the watched session's
+   *  mirror (never for bridge-owned sessions — those already stream as
+   *  `response`s), and a lightweight activity ping for list freshness always. */
+  private onWatcherEvent(e: WatcherEvent): void {
+    if (this.watched && !e.owned && this.watched.agent === e.agent && this.watched.sessionId === e.sessionId) {
+      this.sendToClient({ type: "external_turns", projectPath: e.projectPath, agent: e.agent, sessionId: e.sessionId, items: e.items });
+    }
+    const preview = e.items.length ? e.items[e.items.length - 1]! : null;
+    this.sendToClient({ type: "session_activity", projectPath: e.projectPath, agent: e.agent, sessionId: e.sessionId, lastActive: e.lastActive, preview });
   }
 
   listen(): Promise<number> {
@@ -58,6 +82,7 @@ export class BridgeServer {
       this.wss.on("connection", (ws) => this.onConnection(ws));
       this.wss.on("error", reject);
       this.wss.on("listening", () => {
+        this.watcher.start();
         const addr = this.wss!.address() as AddressInfo;
         resolve(addr.port);
       });
@@ -129,6 +154,7 @@ export class BridgeServer {
     ws.on("close", () => {
       if (this.client === ws) {
         this.client = null;
+        this.watched = null; // the mirror re-registers via view_session on reconnect
         // Don't tear sessions down on a transient drop — the app reconnects and
         // re-sends hello. Only stop everything after a sustained disconnect.
         if (this.disconnectTimer) clearTimeout(this.disconnectTimer);
@@ -167,6 +193,18 @@ export class BridgeServer {
         await this.sessions.open(msg.projectPath, msg.agent, msg.resume, msg.nonce, (m) => this.sendToClient(m));
         return;
       }
+      case "view_session": {
+        // Mirror mode: history snapshot + live watch. No bridge session is
+        // created and nothing spawns (spec §2.2); the fork happens via a later
+        // open_session when the user first prompts.
+        this.watched = { agent: msg.agent, sessionId: msg.sessionId };
+        const items = this.stores[msg.agent].history(msg.projectPath, msg.sessionId, HISTORY_LIMIT);
+        this.send(ws, { type: "session_history", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items });
+        return;
+      }
+      case "unview_session":
+        this.watched = null;
+        return;
       case "prompt":
       case "abort":
       case "set_mode":
@@ -181,6 +219,7 @@ export class BridgeServer {
   }
 
   async close(): Promise<void> {
+    this.watcher.stop();
     if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
     await this.sessions.stopAll();
     await new Promise<void>((resolve) => {
