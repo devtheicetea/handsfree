@@ -51,6 +51,17 @@ describe("parseHistory", () => {
     expect(parseHistory("not json\n{bad", 25)).toEqual([]);
   });
 
+  it("treats a user message with mixed text+tool_result blocks as a real message, extracting text", () => {
+    const jsonl = line({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "here" }, { type: "tool_result", content: "x" }],
+      },
+    });
+    expect(parseHistory(jsonl, 25)).toEqual([{ role: "user", text: "here", tools: [] }]);
+  });
+
   it("lastTurn returns the final item or null", () => {
     const jsonl = line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", name: "Read", input: {} }] } });
     expect(lastTurn(jsonl)).toEqual({ role: "assistant", text: "", tools: ["Read"] });

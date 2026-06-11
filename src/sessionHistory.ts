@@ -8,7 +8,8 @@ export interface HistoryItem {
 // These top-level entry `type`s are not conversation and are skipped wholesale.
 const SKIP_TYPES = new Set(["last-prompt", "mode", "permission-mode", "attachment", "file-history-snapshot"]);
 
-interface Block { type?: string; text?: string; name?: string }
+// minimal shape — only the fields the parser reads
+interface ContentBlock { type?: string; text?: string; name?: string }
 interface RawEntry { type?: string; message?: { role?: string; content?: unknown } }
 
 /** Extract a real user message's text, or null if the entry is a tool_result (not a typed message). */
@@ -16,7 +17,7 @@ function userText(content: unknown): string | null {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     const texts: string[] = [];
-    for (const b of content as Block[]) {
+    for (const b of content as ContentBlock[]) {
       if (b?.type === "text" && typeof b.text === "string") texts.push(b.text);
     }
     return texts.length ? texts.join("\n") : null; // tool_result-only -> null
@@ -32,13 +33,13 @@ function userText(content: unknown): string | null {
 export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
   const items: HistoryItem[] = [];
   let text: string[] = [];
-  let tools: string[] = [];
+  let toolSet = new Set<string>();
   let open = false; // an assistant turn is being accumulated
 
   const flush = () => {
     if (!open) return;
-    items.push({ role: "assistant", text: text.join("\n").trim(), tools });
-    text = []; tools = []; open = false;
+    items.push({ role: "assistant", text: text.join("\n").trim(), tools: [...toolSet] });
+    text = []; toolSet = new Set<string>(); open = false;
   };
 
   for (const raw of jsonlText.split("\n")) {
@@ -58,9 +59,9 @@ export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
       open = true;
       const content = o.message?.content;
       if (Array.isArray(content)) {
-        for (const b of content as Block[]) {
+        for (const b of content as ContentBlock[]) {
           if (b?.type === "text" && typeof b.text === "string") text.push(b.text);
-          else if (b?.type === "tool_use" && typeof b.name === "string" && !tools.includes(b.name)) tools.push(b.name);
+          else if (b?.type === "tool_use" && typeof b.name === "string") toolSet.add(b.name);
           // thinking and other block types are ignored
         }
       }
