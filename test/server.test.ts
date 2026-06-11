@@ -79,11 +79,14 @@ describe("BridgeServer", () => {
     const port = await server.listen();
 
     const ws = await connect(port);
+    const msgs = collect(ws);
     ws.send(JSON.stringify({ type: "hello" }));
-    expect((await next(ws)).type).toBe("hello_ok");
+    await waitFor(msgs, (m) => m.type === "hello_ok");
 
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new" }));
-    ws.send(JSON.stringify({ type: "prompt", projectPath: "/x", text: "hello" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new", nonce: "n0" }));
+    const started = await waitFor(msgs, (m) => m.type === "session_started");
+    const sessionKey = (started as any).sessionKey as string;
+    ws.send(JSON.stringify({ type: "prompt", sessionKey, text: "hello" }));
     await new Promise((r) => setTimeout(r, 30));
     expect(fake.started?.projectPath).toBe("/x");
     expect(fake.prompts).toContain("hello");
@@ -102,12 +105,12 @@ describe("BridgeServer", () => {
     const msgs = collect(ws);
     ws.send(JSON.stringify({ type: "hello" }));
     await waitFor(msgs, (m) => m.type === "hello_ok");
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 30));
     expect(made).toBe(1);
     // The app re-sends open_session for the same project on every reconnect — the
     // bridge must reattach, not tear down + recreate (which aborts the in-flight turn).
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "latest" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "latest", nonce: "n1" }));
     await waitFor(msgs, () => fake.reattached > 0);
     expect(made).toBe(1);            // no second session created
     expect(fake.reattached).toBe(1); // reattached instead
@@ -138,7 +141,7 @@ describe("BridgeServer", () => {
     const a = await connect(port);
     a.send(JSON.stringify({ type: "hello" }));
     await next(a);
-    a.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new" }));
+    a.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 20));
     a.close();
     await new Promise((r) => setTimeout(r, 20));
@@ -164,7 +167,7 @@ describe("BridgeServer", () => {
     const a = await connect(port);
     a.send(JSON.stringify({ type: "hello" }));
     await next(a);
-    a.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new" }));
+    a.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 20));
     a.close();
     await new Promise((r) => setTimeout(r, 20));
@@ -228,12 +231,14 @@ describe("BridgeServer", () => {
     const msgs = collect(ws);
     ws.send(JSON.stringify({ type: "hello" }));
     await waitFor(msgs, (m) => m.type === "hello_ok");
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/a", resume: "new" }));
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/b", resume: "new" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/a", resume: "new", nonce: "na" }));
+    const aStarted = await waitFor(msgs, (m) => m.type === "session_started" && (m as any).projectPath === "/a");
+    const aKey = (aStarted as any).sessionKey as string;
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/b", resume: "new", nonce: "nb" }));
+    await waitFor(msgs, (m) => m.type === "session_started" && (m as any).projectPath === "/b");
+    ws.send(JSON.stringify({ type: "prompt", sessionKey: aKey, text: "hi" }));
     await new Promise((r) => setTimeout(r, 30));
-    ws.send(JSON.stringify({ type: "prompt", projectPath: "/a", text: "hi" }));
-    await new Promise((r) => setTimeout(r, 30));
-    const aResp = msgs.find((m) => m.type === "response" && (m as any).projectPath === "/a");
+    const aResp = msgs.find((m) => m.type === "response" && (m as any).sessionKey === aKey);
     expect(aResp).toBeTruthy();
     expect(made[0].isActive()).toBe(true);
     expect(made[1].isActive()).toBe(true);
@@ -276,11 +281,10 @@ describe("BridgeServer", () => {
     const msgs = collect(ws);
     ws.send(JSON.stringify({ type: "hello" }));
     await waitFor(msgs, (m) => m.type === "hello_ok");
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/Users/me/app", resume: "latest" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/Users/me/app", resume: "latest", nonce: "n0" }));
     const hist = await waitFor(msgs, (m) => m.type === "history");
     expect(hist).toMatchObject({
       type: "history",
-      projectPath: "/Users/me/app",
       items: [
         { role: "user", text: "hi", tools: [] },
         { role: "assistant", text: "yo", tools: [] },
@@ -290,7 +294,7 @@ describe("BridgeServer", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it("reports protocol version 0.2.0 in hello_ok", async () => {
+  it("reports protocol version 0.3.0 in hello_ok", async () => {
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
@@ -298,7 +302,7 @@ describe("BridgeServer", () => {
     const port = await server.listen();
     const ws = await connect(port);
     ws.send(JSON.stringify({ type: "hello" }));
-    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.2.0" });
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.3.0" });
     ws.close();
   });
 
@@ -314,9 +318,9 @@ describe("BridgeServer", () => {
     const msgs = collect(ws);
     ws.send(JSON.stringify({ type: "hello" }));
     await waitFor(msgs, (m) => m.type === "hello_ok");
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex", nonce: "n0" }));
     const err = await waitFor(msgs, (m) => m.type === "error");
-    expect(err).toMatchObject({ type: "error", code: "codex_unavailable", agent: "codex" });
+    expect(err).toMatchObject({ type: "error", code: "codex_unavailable" });
     // No session_started must arrive for the failed preflight.
     await new Promise((r) => setTimeout(r, 30));
     expect(msgs.find((m) => m.type === "session_started")).toBeUndefined();
@@ -339,9 +343,9 @@ describe("BridgeServer", () => {
     const msgs = collect(ws);
     ws.send(JSON.stringify({ type: "hello" }));
     await waitFor(msgs, (m) => m.type === "hello_ok");
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "latest", agent: "codex" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "latest", agent: "codex", nonce: "n0" }));
     const hist = await waitFor(msgs, (m) => m.type === "history");
-    expect(hist).toMatchObject({ type: "history", agent: "codex", items: [codexItem] });
+    expect(hist).toMatchObject({ type: "history", items: [codexItem] });
     ws.close();
   });
 
@@ -366,12 +370,12 @@ describe("BridgeServer", () => {
     await waitFor(msgs, (m) => m.type === "hello_ok");
 
     // First open_session: preflight runs (checks === 1), session starts.
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 30));
     expect(checks).toBe(1);
 
     // Re-open the same live session: preflight must be skipped entirely.
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "latest", agent: "codex", nonce: "n1" }));
     await waitFor(msgs, () => fake.reattached > 0);
 
     // No codex_unavailable error must have arrived.
@@ -406,5 +410,31 @@ describe("BridgeServer", () => {
     expect(proj!.agents.claude?.lastSessionId).toBe("c1");
     expect(proj!.agents.codex?.lastSessionId).toBe("x1");
     ws.close();
+  });
+
+  it("lists sessions and opens one by sessionKey", async () => {
+    const home = mkdtempSync(join(tmpdir(), "srv-ls-"));
+    const dir = join(home, "projects", "-Users-me-app");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "ai-title", value: "T1" }),
+      JSON.stringify({ type: "user", message: { role: "user", content: "hi" } }),
+    ].join("\n") + "\n");
+    const fake = new FakeSession();
+    server = new BridgeServer({ config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
+      makeSession: () => fake as any, claudeHome: home });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    ws.send(JSON.stringify({ type: "list_sessions", projectPath: "/Users/me/app", agent: "claude" }));
+    const list = await waitFor(msgs, (m) => m.type === "sessions");
+    expect((list as any).sessions[0].title).toBe("T1");
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/Users/me/app", agent: "claude", resume: "s1", nonce: "n1" }));
+    const started = await waitFor(msgs, (m) => m.type === "session_started");
+    expect((started as any).nonce).toBe("n1");
+    expect((started as any).sessionKey).toBeTruthy();
+    ws.close(); rmSync(home, { recursive: true, force: true });
   });
 });

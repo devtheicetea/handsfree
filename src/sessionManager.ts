@@ -54,13 +54,20 @@ export class SessionManager {
 
   async open(projectPath: string, agent: AgentName, resume: string, nonce: string, emit: (m: BridgeToClient) => void): Promise<void> {
     const resumeId = this.stores[agent].resolveResume(projectPath, resume) ?? null;
-    if (resumeId) {
+    // Try to reattach to an existing live session. Matching strategy:
+    // 1. If resumeId resolved to a real id, match any active session with that resumeId.
+    // 2. If resume is not "new" (e.g. "latest" resolved to null because there's no history),
+    //    fall back to any active session for the same project+agent — the client is asking
+    //    to reconnect to whatever is running, not to start fresh.
+    // "new" always bypasses reattach and creates a fresh session.
+    if (resume !== "new") {
       for (const [key, ls] of this.sessions) {
-        if (ls.resumeId === resumeId && ls.session.isActive()) {
-          emit({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId, mode: ls.policy.getMode() });
-          ls.session.reattach(this.tagged(key, emit));
-          return;
-        }
+        if (!ls.session.isActive()) continue;
+        if (ls.projectPath !== projectPath || ls.agent !== agent) continue;
+        if (resumeId !== null && ls.resumeId !== null && ls.resumeId !== resumeId) continue;
+        emit({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId: ls.resumeId ?? "", mode: ls.policy.getMode() });
+        ls.session.reattach(this.tagged(key, emit));
+        return;
       }
     }
     const sessionKey = randomUUID();
@@ -99,6 +106,14 @@ export class SessionManager {
 
   has(sessionKey: string): boolean {
     return this.sessions.get(sessionKey)?.session.isActive() ?? false;
+  }
+
+  /** Returns true if any live session exists for the given project+agent pair. */
+  hasForProject(projectPath: string, agent: AgentName): boolean {
+    for (const ls of this.sessions.values()) {
+      if (ls.projectPath === projectPath && ls.agent === agent && ls.session.isActive()) return true;
+    }
+    return false;
   }
 
   async stopAll(): Promise<void> {

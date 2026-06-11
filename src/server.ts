@@ -12,9 +12,8 @@ import type { AgentName } from "./backends/types.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const DISCONNECT_GRACE_MS = 120_000;
-const HISTORY_LIMIT = 25;
 
 export interface ServerDeps {
   config: Config;
@@ -147,9 +146,13 @@ export class BridgeServer {
       case "list_projects":
         this.send(ws, { type: "projects", projects: mergeProjects(this.stores.claude.listProjects(), this.stores.codex.listProjects()) });
         return;
+      case "list_sessions":
+        this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
+                        sessions: this.stores[msg.agent].listSessions(msg.projectPath) });
+        return;
       case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, agent: msg.agent, resume: msg.resume });
-        if (msg.agent === "codex" && !this.sessions.has(msg.projectPath, msg.agent)) {
+        if (msg.agent === "codex" && !this.sessions.hasForProject(msg.projectPath, msg.agent)) {
           try {
             const version = await this.checkCodex(this.codexPath);
             this.logger?.info("codex version", { version });
@@ -157,15 +160,11 @@ export class BridgeServer {
               this.logger?.info("codex version outside tested range — wire constants may need re-verification", { version });
             }
           } catch (err) {
-            this.sendToClient({ type: "error", projectPath: msg.projectPath, agent: msg.agent, code: "codex_unavailable", message: String(err) });
+            this.sendToClient({ type: "error", code: "codex_unavailable", message: String(err) });
             return;
           }
         }
-        // History first (the app replaces its message list with this snapshot),
-        // then the live session attaches and streams new turns on top.
-        const items = this.stores[msg.agent].history(msg.projectPath, msg.resume, HISTORY_LIMIT);
-        this.sendToClient({ type: "history", projectPath: msg.projectPath, agent: msg.agent, items });
-        await this.sessions.open(msg.projectPath, msg.agent, msg.resume, (m) => this.sendToClient(m));
+        await this.sessions.open(msg.projectPath, msg.agent, msg.resume, msg.nonce, (m) => this.sendToClient(m));
         return;
       }
       case "prompt":
@@ -173,7 +172,7 @@ export class BridgeServer {
       case "set_mode":
       case "permission_response": {
         const ok = this.sessions.route(msg);
-        if (!ok) this.send(ws, { type: "error", projectPath: msg.projectPath, agent: msg.agent, code: "no_session", message: "open the project first" });
+        if (!ok) this.send(ws, { type: "error", code: "no_session", message: "open the project first" });
         return;
       }
       case "hello":
