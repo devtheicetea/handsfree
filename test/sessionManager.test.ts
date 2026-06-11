@@ -170,18 +170,25 @@ describe("SessionManager", () => {
     expect(started.agent).toBe("codex");
   });
 
-  it("reattachAll re-attaches all live sessions", async () => {
+  it("reattachAll re-attaches all live sessions and emits no session_started", async () => {
     const manager = new SessionManager({
       safelist: [],
       stores: { claude: emptyStore, codex: emptyStore },
       makeSession: () => new Session(new FakeBackend()),
     });
-    await manager.open("/Users/x/My Project", "codex", "new", "n1", () => {});
+    const openOut: BridgeToClient[] = [];
+    await manager.open("/Users/x/My Project", "codex", "new", "n1", (m) => openOut.push(m));
+    const openKey = (openOut.find((m) => m.type === "session_started") as any).sessionKey as string;
+
     const replayed: BridgeToClient[] = [];
     manager.reattachAll((m) => replayed.push(m));
-    // reattach just rebinds the emit; FakeBackend sessions replay status
-    // We just verify reattachAll runs without error and the session is still active.
-    expect(manager.has).toBeDefined();
+
+    // reattachAll must NOT re-emit session_started (the manager already did on open)
+    expect(replayed.filter((m) => m.type === "session_started")).toHaveLength(0);
+    // it should re-emit a status tagged with the session's key
+    const statuses = replayed.filter((m) => m.type === "status");
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(statuses.every((m) => (m as any).sessionKey === openKey)).toBe(true);
   });
 
   it("resolves resume through the matching agent's store", async () => {
@@ -215,5 +222,21 @@ describe("sessionKey routing", () => {
     expect(started.map((s) => s.nonce).sort()).toEqual(["n1", "n2"]);
     const ok = mgr.route({ type: "prompt", sessionKey: started[0].sessionKey, text: "hi" } as any);
     expect(ok).toBe(true);
+  });
+
+  it("reattaches a live session for the same resumeId instead of spawning another", async () => {
+    let made = 0;
+    const store = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => [] };
+    const mgr = new SessionManager({ safelist: [], makeSession: () => { made++; return new FakeSession() as any; },
+      stores: { claude: store as any, codex: fakeStore() as any } });
+    const out: any[] = [];
+    await mgr.open("/p", "claude", "latest", "n1", (m) => out.push(m));
+    await mgr.open("/p", "claude", "latest", "n2", (m) => out.push(m));   // same resumeId -> reattach
+    expect(made).toBe(1);                                                  // no second Session
+    const started = out.filter((m) => m.type === "session_started");
+    expect(started).toHaveLength(2);                                       // one per open (manager-emitted)
+    expect(started[0].sessionKey).toBe(started[1].sessionKey);            // same live session
+    expect(started.every((s: any) => typeof s.sessionKey === "string" && s.sessionKey.length > 0)).toBe(true);
+    expect(started.every((s: any) => "resumeId" in s && "agent" in s)).toBe(true); // all well-formed (no stale shape)
   });
 });

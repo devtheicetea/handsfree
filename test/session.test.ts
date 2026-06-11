@@ -37,7 +37,7 @@ describe("Session (backend-agnostic shell)", () => {
     await session.stop();
   });
 
-  it("buffers the in-flight turn and replays it (with the learned session id) on reattach", async () => {
+  it("buffers the in-flight turn and replays it on reattach (no session_started — manager owns that)", async () => {
     const backend = new FakeBackend();
     const session = new Session(backend);
     await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: () => {} });
@@ -45,9 +45,12 @@ describe("Session (backend-agnostic shell)", () => {
     await tick();
     const replayed: BridgeToClient[] = [];
     session.reattach((m) => replayed.push(m));
-    expect(replayed[0]).toMatchObject({ type: "session_started", sessionId: "sess-9", projectPath: "/p" });
+    // session_started must NOT be emitted by reattach — the SessionManager owns it
+    expect(replayed.find((m) => m.type === "session_started")).toBeUndefined();
     const text = replayed.filter((m) => m.type === "response").map((m) => (m as { text: string }).text).join("");
     expect(text).toBe("echo:hi");
+    // status is still replayed
+    expect(replayed.some((m) => m.type === "status")).toBe(true);
     await session.stop();
   });
 

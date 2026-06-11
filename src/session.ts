@@ -100,15 +100,17 @@ export class Session {
     this.emit = () => {};
   }
 
-  /** Rebind the emit sink to a reconnected client and replay current state. */
+  /** Rebind the emit sink to a reconnected client and replay current state.
+   *
+   * NOTE: do NOT emit session_started here. The SessionManager is the sole
+   * owner of session_started: it emits it on open (new session) and on
+   * reattach-by-resumeId (returning client). On a reconnect, the app
+   * re-opens its visible session to re-bind; background sessions keep
+   * routing by their sessionKey-tagged response/status messages — so
+   * reattach must not emit session_started.
+   */
   reattach(emit: (msg: BridgeToClient) => void): void {
     this.emit = emit;
-    emit({
-      type: "session_started",
-      sessionId: this.sessionId ?? "",
-      projectPath: this.projectPath,
-      mode: this.policy?.getMode() ?? "safelist",
-    } as any);
     for (const text of this.turnBuffer) emit({ type: "response", turn: this.turnNo, text, done: false } as any);
     emit({ type: "status", state: this.currentStatus } as any);
   }
