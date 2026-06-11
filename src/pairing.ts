@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { networkInterfaces } from "node:os";
+import qrcode from "qrcode-terminal";
+import type { Config } from "./config.js";
 
 export interface HostDeps {
   tailscaleIP: () => string | null;
@@ -42,4 +44,20 @@ export function resolveHost(env: NodeJS.ProcessEnv, deps: HostDeps): string {
 export function buildPairURL(host: string, port: number, token: string | null): string {
   const base = `handsfree://connect?host=${encodeURIComponent(host)}&port=${port}`;
   return token ? `${base}&token=${encodeURIComponent(token)}` : base;
+}
+
+/**
+ * Print the pairing QR + URL. The URL line is emitted synchronously (so it is
+ * easy to test and always visible even if the terminal can't render the QR);
+ * the QR is rendered after it.
+ */
+export function printPairing(
+  config: Config,
+  deps: HostDeps = { tailscaleIP, lanIP },
+  out: (s: string) => void = (s) => process.stdout.write(s),
+): void {
+  const host = resolveHost(process.env, deps);
+  const url = buildPairURL(host, config.port, config.token);
+  out(`\nScan to connect Handsfree (or open this URL on the phone):\n${url}\n`);
+  qrcode.generate(url, { small: true }, (qr) => out("\n" + qr + "\n"));
 }

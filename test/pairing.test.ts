@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveHost, buildPairURL, type HostDeps } from "../src/pairing.js";
+import { printPairing } from "../src/pairing.js";
 
 const deps = (ts: string | null, lan: string | null): HostDeps => ({
   tailscaleIP: () => ts,
@@ -28,5 +29,20 @@ describe("buildPairURL", () => {
   it("omits the token when null or empty", () => {
     expect(buildPairURL("100.1.2.3", 8744, null)).toBe("handsfree://connect?host=100.1.2.3&port=8744");
     expect(buildPairURL("100.1.2.3", 8744, "")).toBe("handsfree://connect?host=100.1.2.3&port=8744");
+  });
+});
+
+describe("printPairing", () => {
+  it("emits the connect URL line, resolving the host from deps", () => {
+    let out = "";
+    const savedHost = process.env.HANDSFREE_HOST;
+    delete process.env.HANDSFREE_HOST;
+    printPairing(
+      { port: 8744, token: null, bindAddress: "0.0.0.0", safelist: [] },
+      { tailscaleIP: () => "100.9.8.7", lanIP: () => null },
+      (s) => { out += s; },
+    );
+    if (savedHost !== undefined) process.env.HANDSFREE_HOST = savedHost;
+    expect(out).toContain("handsfree://connect?host=100.9.8.7&port=8744");
   });
 });
