@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listProjects, resolveResume, historyForProject } from "../src/projects.js";
+import { ClaudeStore } from "../src/stores/claude.js";
 
 let claudeHome: string;
 
@@ -141,5 +142,36 @@ describe("resolveResume", () => {
   });
   it("passes through an explicit id", () => {
     expect(resolveResume(claudeHome, "/Users/me/app", "aaaa-1111")).toBe("aaaa-1111");
+  });
+});
+
+describe("ClaudeStore", () => {
+  it("exposes the same projects as listProjects, as StoreProject", () => {
+    const store = new ClaudeStore(claudeHome);
+    const fromStore = store.listProjects();
+    const direct = listProjects(claudeHome);
+    expect(fromStore.map((p) => p.path)).toEqual(direct.map((p) => p.path));
+    expect(fromStore[0]).not.toHaveProperty("name"); // StoreProject has no name
+    expect(store.resolveResume(direct[0]!.path, "latest")).toBe(direct[0]!.lastSessionId);
+  });
+
+  it("history() returns the same items as historyForProject()", () => {
+    // Build a separate temp claudeHome with conversation turns so history is non-trivial.
+    const home2 = mkdtempSync(join(tmpdir(), "claude-store-h-"));
+    const dir2 = join(home2, "projects", "-Users-me-app");
+    mkdirSync(dir2, { recursive: true });
+    writeFileSync(join(dir2, "sess1.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "hello" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "world" }] } }),
+    ].join("\n") + "\n");
+    const store2 = new ClaudeStore(home2);
+    const fromStore = store2.history("/Users/me/app", "latest", 25);
+    const direct = historyForProject(home2, "/Users/me/app", "latest", 25);
+    expect(fromStore).toEqual(direct);
+    expect(fromStore).toEqual([
+      { role: "user", text: "hello", tools: [] },
+      { role: "assistant", text: "world", tools: [] },
+    ]);
+    rmSync(home2, { recursive: true, force: true });
   });
 });
