@@ -344,6 +344,44 @@ describe("BridgeServer", () => {
     ws.close();
   });
 
+  it("reattaches a live codex session even when the preflight would fail", async () => {
+    let checks = 0;
+    const fake = new FakeSession();
+    let made = 0;
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => { made++; return fake as any; },
+      stores: { claude: fakeStore(), codex: fakeStore() },
+      checkCodex: async () => {
+        checks++;
+        if (checks > 1) throw new CodexUnavailableError("flaky");
+        return "codex 0.99.0";
+      },
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+
+    // First open_session: preflight runs (checks === 1), session starts.
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex" }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(checks).toBe(1);
+
+    // Re-open the same live session: preflight must be skipped entirely.
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex" }));
+    await waitFor(msgs, () => fake.reattached > 0);
+
+    // No codex_unavailable error must have arrived.
+    expect(msgs.find((m) => m.type === "error" && (m as any).code === "codex_unavailable")).toBeUndefined();
+    // checkCodex was NOT called a second time.
+    expect(checks).toBe(1);
+    // Only one session was ever created; the second open reattached.
+    expect(made).toBe(1);
+    ws.close();
+  });
+
   it("merges claude and codex projects into one entry per path", async () => {
     const claudeProj: StoreProject = { path: "/p", lastSessionId: "c1", lastActive: 1, lastMessage: null };
     const codexProj: StoreProject = { path: "/p", lastSessionId: "x1", lastActive: 2, lastMessage: null };

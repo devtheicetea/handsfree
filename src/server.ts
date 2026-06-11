@@ -149,7 +149,7 @@ export class BridgeServer {
         return;
       case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, agent: msg.agent, resume: msg.resume });
-        if (msg.agent === "codex") {
+        if (msg.agent === "codex" && !this.sessions.has(msg.projectPath, msg.agent)) {
           try {
             const version = await this.checkCodex(this.codexPath);
             this.logger?.info("codex version", { version });
