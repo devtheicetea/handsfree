@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listProjects, resolveResume, historyForProject } from "../src/projects.js";
+import { listClaudeProjects, resolveResume, historyForProject } from "../src/projects.js";
 import { ClaudeStore } from "../src/stores/claude.js";
 
 let claudeHome: string;
@@ -23,18 +23,17 @@ beforeEach(() => {
 
 afterEach(() => rmSync(claudeHome, { recursive: true, force: true }));
 
-describe("listProjects", () => {
+describe("listClaudeProjects", () => {
   it("returns one project with the newest session id and decoded path", () => {
-    const projects = listProjects(claudeHome);
+    const projects = listClaudeProjects(claudeHome);
     expect(projects).toHaveLength(1);
     expect(projects[0]!.path).toBe("/Users/me/app");
-    expect(projects[0]!.name).toBe("app");
     expect(projects[0]!.lastSessionId).toBe("bbbb-2222");
     expect(projects[0]!.lastActive).toBeTypeOf("number");
   });
 });
 
-describe("listProjects with metadata-first session files", () => {
+describe("listClaudeProjects with metadata-first session files", () => {
   it("finds cwd on a later line when the first lines are metadata", () => {
     // Real Claude session files start with metadata entries (last-prompt, mode,
     // permission-mode) that have no `cwd`; the cwd appears on later message lines.
@@ -49,15 +48,14 @@ describe("listProjects with metadata-first session files", () => {
         JSON.stringify({ type: "user", cwd: "/Users/me/proj", sessionId: "cccc" }),
       ].join("\n") + "\n";
     writeFileSync(join(dir, "cccc.jsonl"), lines);
-    const projects = listProjects(home);
+    const projects = listClaudeProjects(home);
     expect(projects).toHaveLength(1);
     expect(projects[0]!.path).toBe("/Users/me/proj");
-    expect(projects[0]!.name).toBe("proj");
     rmSync(home, { recursive: true, force: true });
   });
 });
 
-describe("listProjects lastMessage preview", () => {
+describe("listClaudeProjects lastMessage preview", () => {
   it("attaches the truncated last turn as lastMessage", () => {
     const home = mkdtempSync(join(tmpdir(), "claude-home-lm-"));
     const dir = join(home, "projects", "-Users-me-app");
@@ -66,7 +64,7 @@ describe("listProjects lastMessage preview", () => {
       JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "hello there" } }),
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "hi back" }] } }),
     ].join("\n") + "\n");
-    const projects = listProjects(home);
+    const projects = listClaudeProjects(home);
     expect(projects[0]!.lastMessage).toEqual({ role: "assistant", text: "hi back", tools: [] });
     rmSync(home, { recursive: true, force: true });
   });
@@ -76,7 +74,7 @@ describe("listProjects lastMessage preview", () => {
     const dir = join(home, "projects", "-Users-me-x");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "s1.jsonl"), JSON.stringify({ cwd: "/Users/me/x", type: "mode", value: "x" }) + "\n");
-    const projects = listProjects(home);
+    const projects = listClaudeProjects(home);
     expect(projects[0]!.lastMessage).toBeNull();
     rmSync(home, { recursive: true, force: true });
   });
@@ -146,10 +144,10 @@ describe("resolveResume", () => {
 });
 
 describe("ClaudeStore", () => {
-  it("exposes the same projects as listProjects, as StoreProject", () => {
+  it("exposes the same projects as listClaudeProjects, as StoreProject", () => {
     const store = new ClaudeStore(claudeHome);
     const fromStore = store.listProjects();
-    const direct = listProjects(claudeHome);
+    const direct = listClaudeProjects(claudeHome);
     expect(fromStore.map((p) => p.path)).toEqual(direct.map((p) => p.path));
     expect(fromStore[0]).not.toHaveProperty("name"); // StoreProject has no name
     expect(store.resolveResume(direct[0]!.path, "latest")).toBe(direct[0]!.lastSessionId);

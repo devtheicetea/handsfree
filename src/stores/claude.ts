@@ -1,4 +1,4 @@
-import { listProjects, historyForProject, resolveResume, defaultClaudeHome } from "../projects.js";
+import { listClaudeProjects, historyForProject, resolveResume, defaultClaudeHome } from "../projects.js";
 import type { HistoryItem } from "../sessionHistory.js";
 import type { SessionStore, StoreProject } from "./types.js";
 
@@ -6,12 +6,7 @@ export class ClaudeStore implements SessionStore {
   constructor(private readonly claudeHome = defaultClaudeHome()) {}
 
   listProjects(): StoreProject[] {
-    return listProjects(this.claudeHome).map((p) => ({
-      path: p.path,
-      lastSessionId: p.lastSessionId,
-      lastActive: p.lastActive,
-      lastMessage: p.lastMessage,
-    }));
+    return listClaudeProjects(this.claudeHome);
   }
 
   resolveResume(projectPath: string, resume: "latest" | "new" | string): string | undefined {

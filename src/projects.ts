@@ -1,7 +1,9 @@
 import { readdirSync, statSync, readFileSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
+import type { AgentName } from "./backends/types.js";
 import type { ProjectInfo } from "./protocol.js";
+import type { StoreProject } from "./stores/types.js";
 import { lastTurn, parseHistory, type HistoryItem } from "./sessionHistory.js";
 
 export function defaultClaudeHome(): string {
@@ -72,22 +74,37 @@ function scanProjectDir(projectsRoot: string, entry: string): ScannedDir | null 
   return { sessions, newest, newestText, cwd: cwdFromText(newestText) || entry };
 }
 
-export function listProjects(claudeHome = defaultClaudeHome()): ProjectInfo[] {
+export function listClaudeProjects(claudeHome = defaultClaudeHome()): StoreProject[] {
   const projectsRoot = join(claudeHome, "projects");
   if (!existsSync(projectsRoot)) return [];
-  const out: ProjectInfo[] = [];
+  const out: StoreProject[] = [];
   for (const entry of readdirSync(projectsRoot)) {
     const s = scanProjectDir(projectsRoot, entry);
     if (!s) continue;
     out.push({
       path: s.cwd,
-      name: basename(s.cwd),
       lastSessionId: s.newest.sessionId,
       lastActive: s.newest.mtimeMs,
       lastMessage: previewFrom(s.newestText),
     });
   }
   return out.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
+}
+
+/** Merge per-agent store listings into one ProjectInfo per path. */
+export function mergeProjects(claude: StoreProject[], codex: StoreProject[]): ProjectInfo[] {
+  const map = new Map<string, ProjectInfo>();
+  const add = (agent: AgentName, list: StoreProject[]) => {
+    for (const p of list) {
+      const info = map.get(p.path) ?? { path: p.path, name: basename(p.path), agents: {} };
+      info.agents[agent] = { lastSessionId: p.lastSessionId, lastActive: p.lastActive, lastMessage: p.lastMessage };
+      map.set(p.path, info);
+    }
+  };
+  add("claude", claude);
+  add("codex", codex);
+  const latest = (pi: ProjectInfo) => Math.max(pi.agents.claude?.lastActive ?? 0, pi.agents.codex?.lastActive ?? 0);
+  return [...map.values()].sort((a, b) => latest(b) - latest(a));
 }
 
 /**
@@ -125,7 +142,7 @@ export function resolveResume(
 ): string | undefined {
   if (resume === "new") return undefined;
   if (resume === "latest") {
-    const match = listProjects(claudeHome).find((p) => p.path === projectPath);
+    const match = listClaudeProjects(claudeHome).find((p) => p.path === projectPath);
     return match?.lastSessionId ?? undefined;
   }
   return resume;

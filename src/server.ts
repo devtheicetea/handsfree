@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { AddressInfo } from "node:net";
 import { parseClientMessage, encode, type BridgeToClient, type ClientMessage } from "./protocol.js";
 import { Session } from "./session.js";
-import { listProjects, defaultClaudeHome, historyForProject } from "./projects.js";
+import { mergeProjects, listClaudeProjects, defaultClaudeHome, historyForProject } from "./projects.js";
 import { SessionManager } from "./sessionManager.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
@@ -132,14 +132,14 @@ export class BridgeServer {
   private async route(ws: WebSocket, msg: ClientMessage): Promise<void> {
     switch (msg.type) {
       case "list_projects":
-        this.send(ws, { type: "projects", projects: listProjects(this.claudeHome) });
+        this.send(ws, { type: "projects", projects: mergeProjects(listClaudeProjects(this.claudeHome), []) });
         return;
       case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, resume: msg.resume });
         // History first (the app replaces its message list with this snapshot),
         // then the live session attaches and streams new turns on top.
         const items = historyForProject(this.claudeHome, msg.projectPath, msg.resume, HISTORY_LIMIT);
-        this.sendToClient({ type: "history", projectPath: msg.projectPath, items });
+        this.sendToClient({ type: "history", projectPath: msg.projectPath, items, agent: msg.agent });
         await this.sessions.open(msg.projectPath, msg.resume, (m) => this.sendToClient(m));
         return;
       }

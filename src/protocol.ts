@@ -1,5 +1,8 @@
 import { z } from "zod";
 import type { HistoryItem } from "./sessionHistory.js";
+import type { AgentName } from "./backends/types.js";
+
+export const agentSchema = z.enum(["claude", "codex"]).default("claude");
 
 // ---------- client -> bridge ----------
 export const helloSchema = z.object({ type: z.literal("hello"), token: z.string().optional() });
@@ -8,20 +11,23 @@ export const openSessionSchema = z.object({
   type: z.literal("open_session"),
   projectPath: z.string().min(1),
   resume: z.union([z.literal("latest"), z.literal("new"), z.string().min(1)]),
+  agent: agentSchema,
 });
-export const promptSchema = z.object({ type: z.literal("prompt"), projectPath: z.string().min(1), text: z.string().min(1) });
+export const promptSchema = z.object({ type: z.literal("prompt"), projectPath: z.string().min(1), text: z.string().min(1), agent: agentSchema });
 export const permissionResponseSchema = z.object({
   type: z.literal("permission_response"),
   projectPath: z.string().min(1),
   id: z.string().min(1),
   decision: z.enum(["allow", "allow_session", "deny"]),
+  agent: agentSchema,
 });
 export const setModeSchema = z.object({
   type: z.literal("set_mode"),
   projectPath: z.string().min(1),
   mode: z.enum(["safelist", "ask_all", "auto"]),
+  agent: agentSchema,
 });
-export const abortSchema = z.object({ type: z.literal("abort"), projectPath: z.string().min(1) });
+export const abortSchema = z.object({ type: z.literal("abort"), projectPath: z.string().min(1), agent: agentSchema });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
@@ -37,12 +43,16 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 export type PermissionModeName = z.infer<typeof setModeSchema>["mode"];
 
 // ---------- bridge -> client ----------
-export type ProjectInfo = {
-  path: string;
-  name: string;
+export type AgentSessionMeta = {
   lastSessionId: string | null;
   lastActive: number | null;
   lastMessage: HistoryItem | null;
+};
+
+export type ProjectInfo = {
+  path: string;
+  name: string;
+  agents: { claude?: AgentSessionMeta; codex?: AgentSessionMeta };
 };
 
 export type BridgeToClient =
@@ -50,12 +60,12 @@ export type BridgeToClient =
   | { type: "projects"; projects: ProjectInfo[] }
   // sessionId is "" for a brand-new session; the real id is only known after the
   // first turn (learned from the SDK init event), so treat "" as "id unknown".
-  | { type: "session_started"; projectPath: string; sessionId: string; mode: PermissionModeName }
-  | { type: "status"; projectPath: string; state: "thinking" | "idle" | "error" }
-  | { type: "response"; projectPath: string; turn: number; text: string; done: boolean }
-  | { type: "permission_request"; projectPath: string; id: string; tool: string; input: unknown; detail: string }
-  | { type: "history"; projectPath: string; items: HistoryItem[] }
-  | { type: "error"; projectPath?: string; code: string; message: string };
+  | { type: "session_started"; projectPath: string; sessionId: string; mode: PermissionModeName; agent: AgentName }
+  | { type: "status"; projectPath: string; state: "thinking" | "idle" | "error"; agent: AgentName }
+  | { type: "response"; projectPath: string; turn: number; text: string; done: boolean; agent: AgentName }
+  | { type: "permission_request"; projectPath: string; id: string; tool: string; input: unknown; detail: string; agent: AgentName }
+  | { type: "history"; projectPath: string; items: HistoryItem[]; agent: AgentName }
+  | { type: "error"; projectPath?: string; code: string; message: string; agent?: AgentName };
 
 // ---------- parsing ----------
 export type ParseResult =

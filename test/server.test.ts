@@ -20,7 +20,7 @@ class FakeSession {
   isActive() { return this.active; }
   detachEmit() { this.emit = null; }
   get project() { return this.started?.projectPath ?? ""; }
-  reattach(emit: (m: BridgeToClient) => void) { this.reattached++; this.emit = emit; emit({ type: "session_started", sessionId: "x", projectPath: "/x", mode: "safelist" }); }
+  reattach(emit: (m: BridgeToClient) => void) { this.reattached++; this.emit = emit; emit({ type: "session_started", sessionId: "x", projectPath: "/x", mode: "safelist" } as any); }
   // Simulate a tool call asking for permission (uses the real policy the server wired in).
   askNow() { void (this.started as StartParams).policy.evaluate("Bash", {}); }
 }

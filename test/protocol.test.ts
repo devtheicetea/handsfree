@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseClientMessage, type BridgeToClient } from "../src/protocol.js";
+import { mergeProjects } from "../src/projects.js";
 
 describe("Phase 3 tagged client messages", () => {
   it("parses prompt with projectPath", () => {
@@ -22,7 +23,7 @@ describe("parseClientMessage", () => {
   it("accepts a valid prompt message", () => {
     const r = parseClientMessage(JSON.stringify({ type: "prompt", projectPath: "/p", text: "hi" }));
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value).toEqual({ type: "prompt", projectPath: "/p", text: "hi" });
+    if (r.ok) expect(r.value).toEqual({ type: "prompt", projectPath: "/p", text: "hi", agent: "claude" });
   });
 
   it("accepts open_session with resume literal", () => {
@@ -48,7 +49,45 @@ describe("parseClientMessage", () => {
   });
 
   it("encodes a bridge->client response message as plain object", () => {
-    const msg: BridgeToClient = { type: "response", projectPath: "/p", turn: 1, text: "hello", done: false };
+    const msg: BridgeToClient = { type: "response", projectPath: "/p", turn: 1, text: "hello", done: false, agent: "claude" };
     expect(JSON.parse(JSON.stringify(msg))).toEqual(msg);
+  });
+});
+
+describe("agent field", () => {
+  it("defaults agent to claude on every routed message", () => {
+    for (const raw of [
+      { type: "open_session", projectPath: "/p", resume: "new" },
+      { type: "prompt", projectPath: "/p", text: "hi" },
+      { type: "abort", projectPath: "/p" },
+      { type: "set_mode", projectPath: "/p", mode: "auto" },
+      { type: "permission_response", projectPath: "/p", id: "1", decision: "allow" },
+    ]) {
+      const r = parseClientMessage(JSON.stringify(raw));
+      expect(r.ok).toBe(true);
+      if (r.ok) expect((r.value as { agent: string }).agent).toBe("claude");
+    }
+  });
+
+  it("accepts agent: codex and rejects unknown agents", () => {
+    const ok = parseClientMessage(JSON.stringify({ type: "prompt", projectPath: "/p", text: "hi", agent: "codex" }));
+    expect(ok.ok && (ok.value as { agent: string }).agent === "codex").toBe(true);
+    expect(parseClientMessage(JSON.stringify({ type: "prompt", projectPath: "/p", text: "hi", agent: "gemini" })).ok).toBe(false);
+  });
+});
+
+describe("mergeProjects", () => {
+  const sp = (path: string, id: string, at: number) =>
+    ({ path, lastSessionId: id, lastActive: at, lastMessage: null });
+
+  it("merges by path with per-agent metadata, sorted by latest activity across agents", () => {
+    const merged = mergeProjects([sp("/a", "c1", 100), sp("/b", "c2", 50)], [sp("/a", "x1", 200), sp("/c", "x2", 10)]);
+    expect(merged.map((p) => p.path)).toEqual(["/a", "/b", "/c"]); // /a: max(100,200)=200
+    const a = merged[0]!;
+    expect(a.name).toBe("a");
+    expect(a.agents.claude).toMatchObject({ lastSessionId: "c1" });
+    expect(a.agents.codex).toMatchObject({ lastSessionId: "x1" });
+    expect(merged[1]!.agents.codex).toBeUndefined();
+    expect(merged[2]!.agents.claude).toBeUndefined();
   });
 });
