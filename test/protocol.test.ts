@@ -3,32 +3,32 @@ import { parseClientMessage, type BridgeToClient } from "../src/protocol.js";
 import { mergeProjects } from "../src/projects.js";
 
 describe("Phase 3 tagged client messages", () => {
-  it("parses prompt with projectPath", () => {
-    const r = parseClientMessage(JSON.stringify({ type: "prompt", projectPath: "/p", text: "hi" }));
+  it("parses prompt with sessionKey", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "prompt", sessionKey: "k1", text: "hi" }));
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value).toMatchObject({ type: "prompt", projectPath: "/p", text: "hi" });
+    if (r.ok) expect(r.value).toMatchObject({ type: "prompt", sessionKey: "k1", text: "hi" });
   });
-  it("rejects prompt without projectPath", () => {
+  it("rejects prompt without sessionKey", () => {
     const r = parseClientMessage(JSON.stringify({ type: "prompt", text: "hi" }));
     expect(r.ok).toBe(false);
   });
-  it("parses abort/set_mode/permission_response with projectPath", () => {
-    expect(parseClientMessage(JSON.stringify({ type: "abort", projectPath: "/p" })).ok).toBe(true);
-    expect(parseClientMessage(JSON.stringify({ type: "set_mode", projectPath: "/p", mode: "safelist" })).ok).toBe(true);
-    expect(parseClientMessage(JSON.stringify({ type: "permission_response", projectPath: "/p", id: "x", decision: "allow" })).ok).toBe(true);
+  it("parses abort/set_mode/permission_response with sessionKey", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "abort", sessionKey: "k1" })).ok).toBe(true);
+    expect(parseClientMessage(JSON.stringify({ type: "set_mode", sessionKey: "k1", mode: "safelist" })).ok).toBe(true);
+    expect(parseClientMessage(JSON.stringify({ type: "permission_response", sessionKey: "k1", id: "x", decision: "allow" })).ok).toBe(true);
   });
 });
 
 describe("parseClientMessage", () => {
   it("accepts a valid prompt message", () => {
-    const r = parseClientMessage(JSON.stringify({ type: "prompt", projectPath: "/p", text: "hi" }));
+    const r = parseClientMessage(JSON.stringify({ type: "prompt", sessionKey: "k1", text: "hi" }));
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value).toEqual({ type: "prompt", projectPath: "/p", text: "hi", agent: "claude" });
+    if (r.ok) expect(r.value).toEqual({ type: "prompt", sessionKey: "k1", text: "hi" });
   });
 
-  it("accepts open_session with resume literal", () => {
+  it("accepts open_session with resume literal and nonce", () => {
     const r = parseClientMessage(
-      JSON.stringify({ type: "open_session", projectPath: "/x", resume: "latest" }),
+      JSON.stringify({ type: "open_session", projectPath: "/x", agent: "claude", resume: "latest", nonce: "n1" }),
     );
     expect(r.ok).toBe(true);
   });
@@ -49,19 +49,16 @@ describe("parseClientMessage", () => {
   });
 
   it("encodes a bridge->client response message as plain object", () => {
-    const msg: BridgeToClient = { type: "response", projectPath: "/p", turn: 1, text: "hello", done: false, agent: "claude" };
+    const msg: BridgeToClient = { type: "response", sessionKey: "k1", turn: 1, text: "hello", done: false };
     expect(JSON.parse(JSON.stringify(msg))).toEqual(msg);
   });
 });
 
 describe("agent field", () => {
-  it("defaults agent to claude on every routed message", () => {
+  it("defaults agent to claude on open_session and list_sessions", () => {
     for (const raw of [
-      { type: "open_session", projectPath: "/p", resume: "new" },
-      { type: "prompt", projectPath: "/p", text: "hi" },
-      { type: "abort", projectPath: "/p" },
-      { type: "set_mode", projectPath: "/p", mode: "auto" },
-      { type: "permission_response", projectPath: "/p", id: "1", decision: "allow" },
+      { type: "open_session", projectPath: "/p", resume: "new", nonce: "n1" },
+      { type: "list_sessions", projectPath: "/p" },
     ]) {
       const r = parseClientMessage(JSON.stringify(raw));
       expect(r.ok).toBe(true);
@@ -69,10 +66,13 @@ describe("agent field", () => {
     }
   });
 
-  it("accepts agent: codex and rejects unknown agents", () => {
-    const ok = parseClientMessage(JSON.stringify({ type: "prompt", projectPath: "/p", text: "hi", agent: "codex" }));
+  it("accepts agent: codex on open_session", () => {
+    const ok = parseClientMessage(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", nonce: "n1", agent: "codex" }));
     expect(ok.ok && (ok.value as { agent: string }).agent === "codex").toBe(true);
-    expect(parseClientMessage(JSON.stringify({ type: "prompt", projectPath: "/p", text: "hi", agent: "gemini" })).ok).toBe(false);
+  });
+
+  it("rejects unknown agents on open_session", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", nonce: "n1", agent: "gemini" })).ok).toBe(false);
   });
 });
 
@@ -88,6 +88,10 @@ describe("v0.3.0 client messages", () => {
   it("parses prompt routed by sessionKey", () => {
     const r = parseClientMessage(JSON.stringify({ type: "prompt", sessionKey: "k1", text: "hi" }));
     expect(r.ok && r.value.type === "prompt" && (r.value as any).sessionKey).toBe("k1");
+  });
+  it("rejects open_session without nonce", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "open_session", projectPath: "/p", agent: "claude", resume: "new" }));
+    expect(r.ok).toBe(false);
   });
 });
 

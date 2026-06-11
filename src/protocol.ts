@@ -14,30 +14,18 @@ export const openSessionSchema = z.object({
   projectPath: z.string().min(1),
   resume: z.union([z.literal("latest"), z.literal("new"), z.string().min(1)]),
   agent: agentSchema,
-  nonce: z.string().min(1).optional(),
+  nonce: z.string().min(1),
 });
-// Session-scoped messages: v0.3.0 routes by sessionKey; legacy routing used projectPath+agent.
-// Both forms are accepted so old tests and new tests can coexist during the migration.
-export const promptSchema = z.union([
-  z.object({ type: z.literal("prompt"), sessionKey: z.string().min(1), text: z.string().min(1) }),
-  z.object({ type: z.literal("prompt"), projectPath: z.string().min(1), text: z.string().min(1), agent: agentSchema }),
-]);
-export const permissionResponseSchema = z.union([
-  z.object({ type: z.literal("permission_response"), sessionKey: z.string().min(1), id: z.string().min(1), decision: z.enum(["allow", "allow_session", "deny"]) }),
-  z.object({ type: z.literal("permission_response"), projectPath: z.string().min(1), id: z.string().min(1), decision: z.enum(["allow", "allow_session", "deny"]), agent: agentSchema }),
-]);
-export const setModeSchema = z.union([
-  z.object({ type: z.literal("set_mode"), sessionKey: z.string().min(1), mode: z.enum(["safelist", "ask_all", "auto"]) }),
-  z.object({ type: z.literal("set_mode"), projectPath: z.string().min(1), mode: z.enum(["safelist", "ask_all", "auto"]), agent: agentSchema }),
-]);
-export const abortSchema = z.union([
-  z.object({ type: z.literal("abort"), sessionKey: z.string().min(1) }),
-  z.object({ type: z.literal("abort"), projectPath: z.string().min(1), agent: agentSchema }),
-]);
+// Session-scoped messages: v0.3.0 routes by sessionKey.
+export const promptSchema = z.object({ type: z.literal("prompt"), sessionKey: z.string().min(1), text: z.string().min(1) });
+export const permissionResponseSchema = z.object({
+  type: z.literal("permission_response"), sessionKey: z.string().min(1),
+  id: z.string().min(1), decision: z.enum(["allow", "allow_session", "deny"]),
+});
+export const setModeSchema = z.object({ type: z.literal("set_mode"), sessionKey: z.string().min(1), mode: z.enum(["safelist", "ask_all", "auto"]) });
+export const abortSchema = z.object({ type: z.literal("abort"), sessionKey: z.string().min(1) });
 
-// clientMessageSchema uses z.union (not discriminatedUnion) because the session-scoped
-// schemas are themselves z.union shapes and cannot be nested into a discriminatedUnion.
-export const clientMessageSchema = z.union([
+export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
   listProjectsSchema,
   listSessionsSchema,
