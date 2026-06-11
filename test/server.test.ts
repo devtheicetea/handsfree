@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -293,6 +293,41 @@ describe("BridgeServer", () => {
     });
     ws.close();
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it("mirrors REAL file appends end-to-end: view_session -> append -> external_turns (real watcher)", async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "srv-codex-"));
+    const claudeHome = mkdtempSync(join(tmpdir(), "srv-claude-"));
+    const day = join(codexHome, "sessions", "2026", "06", "11");
+    mkdirSync(day, { recursive: true });
+    const meta = JSON.stringify({ timestamp: "t", type: "session_meta", payload: { id: "thr_e2e", cwd: "/p", cli_version: "0.139.0" } }) + "\n";
+    const assistant = JSON.stringify({ timestamp: "t", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "live from laptop" }] } }) + "\n";
+    const file = join(day, "rollout-2026-06-11T10-00-00-thr_e2e.jsonl");
+    writeFileSync(file, meta);
+
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
+      makeSession: () => new FakeSession() as any,
+      claudeHome,
+      codexHome,
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+
+    ws.send(JSON.stringify({ type: "view_session", projectPath: "/p", agent: "codex", sessionId: "thr_e2e" }));
+    await waitFor(msgs, (m) => m.type === "session_history");
+
+    appendFileSync(file, assistant);
+    const turns = await waitFor(msgs, (m) => m.type === "external_turns", 4000);
+    expect((turns as any).sessionId).toBe("thr_e2e");
+    expect((turns as any).items).toEqual([{ role: "assistant", text: "live from laptop", tools: [] }]);
+
+    ws.close();
+    rmSync(codexHome, { recursive: true, force: true });
+    rmSync(claudeHome, { recursive: true, force: true });
   });
 
   it("reports protocol version 0.4.0 in hello_ok", async () => {

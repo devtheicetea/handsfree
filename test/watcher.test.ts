@@ -130,6 +130,21 @@ describe("SessionWatcher", () => {
     expect(c.events[c.events.length - 1]!.items).toEqual([{ role: "assistant", text: "after rewrite", tools: [] }]);
   });
 
+  it("resolves real-sized session_meta lines (codex embeds ~22KB of base_instructions)", async () => {
+    const bigMeta = JSON.stringify({
+      timestamp: "t",
+      type: "session_meta",
+      payload: { id: "thr_big", cwd: "/p", cli_version: "0.139.0", base_instructions: { text: "x".repeat(22_000) } },
+    }) + "\n";
+    const f = join(codexDay(), "rollout-2026-06-11T12-00-00-thr_big.jsonl");
+    writeFileSync(f, bigMeta);
+    const c = start();
+    await new Promise((r) => setTimeout(r, 200));
+    appendFileSync(f, codexAssistant("after big meta"));
+    expect(await c.wait(() => c.events.length >= 1)).toBe(true);
+    expect(c.events[0]).toMatchObject({ sessionId: "thr_big", projectPath: "/p" });
+  });
+
   it("skips unresolvable files silently", async () => {
     const c = start();
     await new Promise((r) => setTimeout(r, 200));

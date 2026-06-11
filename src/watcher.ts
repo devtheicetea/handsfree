@@ -155,11 +155,36 @@ export class SessionWatcher {
     } catch { return null; }
   }
 
+  /** Read the file head up to (and incl.) the first newline, growing in chunks.
+   *  Real codex session_meta lines run ~22KB (embedded base_instructions), so a
+   *  fixed small head read silently fails to resolve real files. Capped at 256KB. */
+  private readHead(file: string, cap = 256 * 1024): string | null {
+    const step = 64 * 1024;
+    const parts: Buffer[] = [];
+    try {
+      const fd = openSync(file, "r");
+      try {
+        for (let offset = 0; offset < cap; offset += step) {
+          const buf = Buffer.alloc(step);
+          const n = readSync(fd, buf, 0, step, offset);
+          if (n <= 0) break;
+          const part = buf.subarray(0, n);
+          parts.push(part);
+          if (n < step || part.includes(0x0a)) break; // EOF or newline reached
+        }
+      } finally { closeSync(fd); }
+    } catch { return null; }
+    if (parts.length === 0) return null;
+    // Decode ONCE so multi-byte UTF-8 characters straddling chunk boundaries survive.
+    return Buffer.concat(parts).toString("utf8");
+  }
+
   /** Resolve (sessionId, projectPath) for a file from its head. */
   private resolve(agent: AgentName, file: string): { sessionId: string; projectPath: string } | null {
-    const head = this.read(file, 0, 8192);
-    if (head === null) return null;
     if (agent === "codex") {
+      // session_meta is the FIRST line; readHead grows until its newline.
+      const head = this.readHead(file);
+      if (head === null) return null;
       const nl = head.indexOf("\n");
       const first = (nl >= 0 ? head.slice(0, nl) : head).trim();
       try {
@@ -170,11 +195,14 @@ export class SessionWatcher {
       } catch { /* fallthrough */ }
       return null;
     }
-    // claude: filename is the session id, cwd from the first line that carries one
+    // claude: filename is the session id; the cwd appears on SOME early line
+    // (metadata lines precede it), so scan a generous bounded head.
     const base = file.slice(file.lastIndexOf("/") + 1);
     if (!base.endsWith(".jsonl")) return null;
     const sessionId = base.slice(0, -".jsonl".length);
-    const cwd = cwdFromText(head);
+    const head = this.read(file, 0, 256 * 1024);
+    if (head === null) return null;
+    const cwd = cwdFromText(head); // tolerates a truncated trailing line
     return cwd ? { sessionId, projectPath: cwd } : null;
   }
 }
