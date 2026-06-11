@@ -80,6 +80,16 @@ describe("ClaudeBackend", () => {
     await consuming;
   });
 
+  it("throws on a second start() (use-once contract)", async () => {
+    const b = new ClaudeBackend({ queryFn: fakeQueryFn(), waitForSessionFile: async () => {} });
+    const iter1 = b.start({ projectPath: "/p", resume: undefined, evaluate });
+    b.prompt("hi");
+    await collect(iter1, (e) => e.some((x) => x.kind === "turn_done"));
+    await expect((async () => { for await (const _ of b.start({ projectPath: "/p", resume: undefined, evaluate })) { /* none */ } })())
+      .rejects.toThrow("backend already started");
+    await b.stop();
+  });
+
   it("ends cleanly on deliberate abort (plain Error('Operation aborted')) but throws on a real crash", async () => {
     // deliberate abort -> clean end
     const abortingQueryFn: QueryFn = ({ options }) => {

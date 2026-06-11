@@ -36,6 +36,7 @@ export class ClaudeBackend implements AgentBackend {
   private readonly prompts = new Pushable<SDKUserMessage>();
   private readonly abort = new AbortController();
   private queryObj: { interrupt?: () => Promise<void> } | null = null;
+  private started = false;
 
   constructor(deps: ClaudeBackendDeps = {}) {
     this.queryFn = deps.queryFn ?? (realQuery as unknown as QueryFn);
@@ -43,6 +44,8 @@ export class ClaudeBackend implements AgentBackend {
   }
 
   async *start(opts: BackendStartOpts): AsyncGenerator<AgentEvent, void> {
+    if (this.started) throw new Error("backend already started");
+    this.started = true;
     const q = this.queryFn({
       prompt: this.prompts,
       options: {
