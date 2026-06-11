@@ -141,6 +141,20 @@ describe("SessionManager", () => {
     }
   });
 
+  it("reattachAll preserves project paths containing spaces", async () => {
+    const manager = new SessionManager({
+      safelist: [],
+      stores: { claude: emptyStore, codex: emptyStore },
+      makeSession: () => new Session(new FakeBackend()),
+    });
+    await manager.open("/Users/x/My Project", "codex", "new", () => {});
+    const replayed: BridgeToClient[] = [];
+    manager.reattachAll((m) => replayed.push(m));
+    const started = replayed.find((m) => m.type === "session_started")!;
+    expect((started as { projectPath: string }).projectPath).toBe("/Users/x/My Project");
+    expect((started as { agent: string }).agent).toBe("codex");
+  });
+
   it("resolves resume through the matching agent's store", async () => {
     const calls: string[] = [];
     const store = (tag: string): SessionStore => ({
