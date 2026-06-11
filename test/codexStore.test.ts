@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CodexStore, parseCodexHistory } from "../src/stores/codex.js";
@@ -39,6 +39,14 @@ describe("parseCodexHistory", () => {
     const noisy = "not json\n" + SAMPLE;
     expect(parseCodexHistory(noisy, 1)).toEqual([{ role: "assistant", text: "It passes.", tools: [] }]);
     expect(parseCodexHistory("", 5)).toEqual([]);
+  });
+
+  it("parses a REAL captured rollout file (canary for format drift)", () => {
+    const text = readFileSync(new URL("./fixtures/codex/rollout-real.jsonl", import.meta.url), "utf8");
+    const items = parseCodexHistory(text, 25);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.some((i) => i.role === "assistant" && i.text.length > 0)).toBe(true);
+    expect(items.every((i) => !i.text.startsWith("<environment_context>"))).toBe(true);
   });
 });
 
