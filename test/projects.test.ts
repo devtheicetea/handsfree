@@ -100,6 +100,38 @@ describe("historyForProject", () => {
   });
 });
 
+describe("historyForProject specific-session-id branch", () => {
+  it("returns the named session's turns, and falls back to newest for a missing id", () => {
+    const home = mkdtempSync(join(tmpdir(), "claude-home-sid-"));
+    const dir = join(home, "projects", "-Users-me-app");
+    mkdirSync(dir, { recursive: true });
+    // Write s1 first (older mtime), then s2 (newer mtime).
+    writeFileSync(join(dir, "s1.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "from-s1" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "reply-s1" }] } }),
+    ].join("\n") + "\n");
+    writeFileSync(join(dir, "s2.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "from-s2" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "reply-s2" }] } }),
+    ].join("\n") + "\n");
+
+    // s2 was written last so it has a later mtime — it is the "newest" session.
+    // Requesting s1 explicitly should return s1's turns, not s2's.
+    expect(historyForProject(home, "/Users/me/app", "s1", 25)).toEqual([
+      { role: "user", text: "from-s1", tools: [] },
+      { role: "assistant", text: "reply-s1", tools: [] },
+    ]);
+
+    // A missing session id should fall back to the newest (s2).
+    expect(historyForProject(home, "/Users/me/app", "missing-id", 25)).toEqual([
+      { role: "user", text: "from-s2", tools: [] },
+      { role: "assistant", text: "reply-s2", tools: [] },
+    ]);
+
+    rmSync(home, { recursive: true, force: true });
+  });
+});
+
 describe("resolveResume", () => {
   it("resolves 'latest' to the newest session id", () => {
     expect(resolveResume(claudeHome, "/Users/me/app", "latest")).toBe("bbbb-2222");

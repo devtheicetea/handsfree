@@ -53,24 +53,38 @@ function previewFrom(text: string | null): HistoryItem | null {
   return last ? { role: last.role, text: truncate(last.text, 140), tools: last.tools } : null;
 }
 
+interface ScannedDir {
+  sessions: SessionFile[];
+  newest: SessionFile;
+  newestText: string;
+  cwd: string;
+}
+
+/** Read a project dir's newest session once; returns null if it has no readable session. */
+function scanProjectDir(projectsRoot: string, entry: string): ScannedDir | null {
+  const dir = join(projectsRoot, entry);
+  if (!statSync(dir).isDirectory()) return null;
+  const sessions = sessionFilesIn(dir);
+  const newest = sessions[0];
+  if (!newest) return null;
+  const newestText = readSafe(newest.file);
+  if (newestText === null) return null;
+  return { sessions, newest, newestText, cwd: cwdFromText(newestText) || entry };
+}
+
 export function listProjects(claudeHome = defaultClaudeHome()): ProjectInfo[] {
   const projectsRoot = join(claudeHome, "projects");
   if (!existsSync(projectsRoot)) return [];
   const out: ProjectInfo[] = [];
   for (const entry of readdirSync(projectsRoot)) {
-    const dir = join(projectsRoot, entry);
-    if (!statSync(dir).isDirectory()) continue;
-    const sessions = sessionFilesIn(dir);
-    const newest = sessions[0];
-    if (!newest) continue;
-    const text = readSafe(newest.file);
-    const cwd = (text !== null && cwdFromText(text)) || entry;
+    const s = scanProjectDir(projectsRoot, entry);
+    if (!s) continue;
     out.push({
-      path: cwd,
-      name: basename(cwd),
-      lastSessionId: newest.sessionId,
-      lastActive: newest.mtimeMs,
-      lastMessage: previewFrom(text),
+      path: s.cwd,
+      name: basename(s.cwd),
+      lastSessionId: s.newest.sessionId,
+      lastActive: s.newest.mtimeMs,
+      lastMessage: previewFrom(s.newestText),
     });
   }
   return out.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
@@ -90,19 +104,14 @@ export function historyForProject(
   const projectsRoot = join(claudeHome, "projects");
   if (!existsSync(projectsRoot)) return [];
   for (const entry of readdirSync(projectsRoot)) {
-    const dir = join(projectsRoot, entry);
-    if (!statSync(dir).isDirectory()) continue;
-    const sessions = sessionFilesIn(dir);
-    const newest = sessions[0];
-    if (!newest) continue;
-    const newestText = readSafe(newest.file);
-    if (newestText === null) continue;
-    if (((cwdFromText(newestText)) || entry) !== projectPath) continue;
+    const s = scanProjectDir(projectsRoot, entry);
+    if (!s) continue;
+    if (s.cwd !== projectPath) continue;
     // Matched project. Use the resumed session's file when a specific id is given.
-    let text = newestText;
+    let text = s.newestText;
     if (resume !== "latest") {
-      const match = sessions.find((s) => s.sessionId === resume);
-      if (match) text = readSafe(match.file) ?? newestText;
+      const match = s.sessions.find((x) => x.sessionId === resume);
+      if (match) text = readSafe(match.file) ?? s.newestText;
     }
     return parseHistory(text, limit);
   }

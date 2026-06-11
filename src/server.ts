@@ -9,6 +9,7 @@ import type { Logger } from "./logger.js";
 
 const VERSION = "0.1.0";
 const DISCONNECT_GRACE_MS = 120_000;
+const HISTORY_LIMIT = 25;
 
 export interface ServerDeps {
   config: Config;
@@ -137,7 +138,7 @@ export class BridgeServer {
         this.logger?.info("open_session", { projectPath: msg.projectPath, resume: msg.resume });
         // History first (the app replaces its message list with this snapshot),
         // then the live session attaches and streams new turns on top.
-        const items = historyForProject(this.claudeHome, msg.projectPath, msg.resume, 25);
+        const items = historyForProject(this.claudeHome, msg.projectPath, msg.resume, HISTORY_LIMIT);
         this.sendToClient({ type: "history", projectPath: msg.projectPath, items });
         await this.sessions.open(msg.projectPath, msg.resume, (m) => this.sendToClient(m));
         return;
