@@ -90,4 +90,10 @@ describe("mergeProjects", () => {
     expect(merged[1]!.agents.codex).toBeUndefined();
     expect(merged[2]!.agents.claude).toBeUndefined();
   });
+
+  it("keeps the newest entry when one store reports duplicate paths", () => {
+    const merged = mergeProjects([sp("/a", "newer", 200), sp("/a", "older", 100)], []);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.agents.claude).toMatchObject({ lastSessionId: "newer", lastActive: 200 });
+  });
 });

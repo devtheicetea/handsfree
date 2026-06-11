@@ -97,7 +97,12 @@ export function mergeProjects(claude: StoreProject[], codex: StoreProject[]): Pr
   const add = (agent: AgentName, list: StoreProject[]) => {
     for (const p of list) {
       const info = map.get(p.path) ?? { path: p.path, name: basename(p.path), agents: {} };
-      info.agents[agent] = { lastSessionId: p.lastSessionId, lastActive: p.lastActive, lastMessage: p.lastMessage };
+      // listClaudeProjects can emit duplicate paths (two dirs decoding to one cwd),
+      // sorted newest-first. Keep the newest; `>` lets the first entry win ties.
+      const prev = info.agents[agent];
+      if (!prev || (p.lastActive ?? 0) > (prev.lastActive ?? 0)) {
+        info.agents[agent] = { lastSessionId: p.lastSessionId, lastActive: p.lastActive, lastMessage: p.lastMessage };
+      }
       map.set(p.path, info);
     }
   };

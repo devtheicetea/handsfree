@@ -36,7 +36,6 @@ export class BridgeServer {
     this.sessions = new SessionManager({
       safelist: this.config.safelist,
       makeSession: deps.makeSession,
-      claudeHome: this.claudeHome,
     });
   }
 
@@ -140,7 +139,7 @@ export class BridgeServer {
         // then the live session attaches and streams new turns on top.
         const items = historyForProject(this.claudeHome, msg.projectPath, msg.resume, HISTORY_LIMIT);
         this.sendToClient({ type: "history", projectPath: msg.projectPath, items, agent: msg.agent });
-        await this.sessions.open(msg.projectPath, msg.resume, (m) => this.sendToClient(m));
+        await this.sessions.open(msg.projectPath, msg.agent, msg.resume, (m) => this.sendToClient(m));
         return;
       }
       case "prompt":
