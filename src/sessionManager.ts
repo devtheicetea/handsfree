@@ -1,4 +1,5 @@
 import { Session } from "./session.js";
+import { ClaudeBackend } from "./backends/claude.js";
 import { PermissionPolicy } from "./permissions.js";
 import { resolveResume as defaultResolveResume, defaultClaudeHome } from "./projects.js";
 import type { BridgeToClient, ClientMessage } from "./protocol.js";
@@ -31,7 +32,7 @@ export class SessionManager {
 
   constructor(deps: SessionManagerDeps) {
     this.safelist = deps.safelist;
-    this.makeSession = deps.makeSession ?? (() => new Session());
+    this.makeSession = deps.makeSession ?? (() => new Session(new ClaudeBackend()));
     this.claudeHome = deps.claudeHome ?? defaultClaudeHome();
     this.resolveResume = deps.resolveResume ?? defaultResolveResume;
   }

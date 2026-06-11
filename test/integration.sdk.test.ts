@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Session } from "../src/session.js";
+import { ClaudeBackend } from "../src/backends/claude.js";
 import { PermissionPolicy } from "../src/permissions.js";
 import type { BridgeToClient } from "../src/protocol.js";
 
@@ -10,7 +11,7 @@ run("real Agent SDK text loop", () => {
     const emitted: BridgeToClient[] = [];
     const policy = new PermissionPolicy(["Read", "Grep", "Glob", "LS"], () => {});
     policy.setMode("auto");
-    const session = new Session();
+    const session = new Session(new ClaudeBackend());
     await session.start({
       projectPath: process.cwd(),
       resume: undefined,

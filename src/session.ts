@@ -1,34 +1,6 @@
-import { query as realQuery } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { Pushable } from "./pushable.js";
+import type { AgentBackend } from "./backends/types.js";
 import type { PermissionPolicy } from "./permissions.js";
 import type { BridgeToClient } from "./protocol.js";
-import { awaitSessionFile } from "./sessionFile.js";
-
-export type QueryFn = (params: {
-  prompt: AsyncIterable<SDKUserMessage>;
-  options?: {
-    cwd?: string;
-    resume?: string;
-    permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
-    settingSources?: ("user" | "project" | "local")[];
-    includePartialMessages?: boolean;
-    canUseTool?: (
-      toolName: string,
-      input: Record<string, unknown>,
-      options: { signal: AbortSignal; toolUseID: string },
-    ) => Promise<unknown>;
-    abortController?: AbortController;
-  };
-}) => AsyncGenerator<SDKMessage, void> & {
-  setPermissionMode?: (m: string) => Promise<void>;
-  interrupt?: () => Promise<void>;
-};
-
-export interface SessionDeps {
-  queryFn?: QueryFn;
-  waitForSessionFile?: (sessionId: string) => Promise<void>;
-}
 
 export interface StartParams {
   projectPath: string;
@@ -38,19 +10,15 @@ export interface StartParams {
 }
 
 /**
- * Owns one Claude Agent SDK query() for the lifetime of a single session.
- * Use-once: after stop()/abort/crash, create a new Session for the next
- * open_session rather than restarting this instance.
+ * Backend-agnostic session shell. Owns the client-facing state machine (turn
+ * numbering, reattach buffer, status) and drives one AgentBackend for its
+ * lifetime. Use-once: after stop()/crash, create a new Session.
  */
 export class Session {
-  private readonly queryFn: QueryFn;
-  private readonly waitForSessionFile: (sessionId: string) => Promise<void>;
-  private prompts: Pushable<SDKUserMessage> | null = null;
-  private abort: AbortController | null = null;
-  private queryObj: { interrupt?: () => Promise<void> } | null = null;
+  private readonly backend: AgentBackend;
   private loop: Promise<void> | null = null;
   private emit: ((msg: BridgeToClient) => void) | null = null;
-  /** Real session id, learned from the SDK init event (after the first turn). */
+  /** Real session id, learned from the backend's session_id event. */
   private sessionId: string | null = null;
 
   private active = false;
@@ -60,9 +28,8 @@ export class Session {
   private turnBuffer: string[] = [];
   private turnNo = 0;
 
-  constructor(deps: SessionDeps = {}) {
-    this.queryFn = deps.queryFn ?? (realQuery as unknown as QueryFn);
-    this.waitForSessionFile = deps.waitForSessionFile ?? ((id) => awaitSessionFile(id));
+  constructor(backend: AgentBackend) {
+    this.backend = backend;
   }
 
   /** Single emit path: tracks status + buffers the in-flight turn for reattach. */
@@ -81,58 +48,28 @@ export class Session {
     this.active = true;
     this.turnBuffer = [];
     this.currentStatus = "idle";
-    this.prompts = new Pushable<SDKUserMessage>();
-    this.abort = new AbortController();
 
-    const q = this.queryFn({
-      prompt: this.prompts,
-      options: {
-        cwd: projectPath,
-        resume,
-        permissionMode: "default",
-        // Bridge is the authoritative permission gate (Phase 1.5 spec §1): load
-        // only project settings (keeps CLAUDE.md) and drop the user's global
-        // ~/.claude allow rules so canUseTool governs every tool decision.
-        settingSources: ["project"],
-        includePartialMessages: true,
-        abortController: this.abort,
-        canUseTool: async (toolName, input) => policy.evaluate(toolName, input),
-      },
-    });
-
-    this.queryObj = q;
     this.loop = (async () => {
       try {
-        for await (const msg of q) {
-          if (msg.type === "system" && (msg as { subtype?: string }).subtype === "init") {
-            // The SDK only emits init AFTER the first user message. We do NOT gate
-            // session_started on this (that would deadlock — the client waits for
-            // session_started before prompting). We just record the real id here.
-            const id = (msg as { session_id: string }).session_id;
-            await this.waitForSessionFile(id);
-            this.sessionId = id;
-          } else if (msg.type === "stream_event") {
-            const ev = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
-            if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
-              this.send({ type: "response", turn: this.turnNo, text: ev.delta.text, done: false } as any);
-            }
-          } else if (msg.type === "result") {
+        const events = this.backend.start({
+          projectPath,
+          resume,
+          evaluate: (tool, input) => policy.evaluate(tool, input),
+        });
+        for await (const ev of events) {
+          if (ev.kind === "session_id") {
+            this.sessionId = ev.id;
+          } else if (ev.kind === "text_delta") {
+            this.send({ type: "response", turn: this.turnNo, text: ev.text, done: false } as any);
+          } else if (ev.kind === "turn_done") {
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
             this.send({ type: "status", state: "idle" } as any);
           }
         }
       } catch (err) {
-        // A deliberate abort (stop()/abortTurn() → this.abort.abort()) is NOT a crash.
-        // The SDK can throw a plain Error("Operation aborted") whose name is "Error",
-        // not "AbortError", so detect the abort via the signal — not the error name —
-        // otherwise tearing down the previous session on open_session, barge-in, or
-        // push-to-talk would surface a spurious session_crashed to the client.
-        const aborted = this.abort?.signal.aborted ?? false;
-        const name = err instanceof Error ? err.name : "";
-        if (!aborted && name !== "AbortError") {
-          this.send({ type: "status", state: "error" } as any);
-          this.send({ type: "error", code: "session_crashed", message: String(err) });
-        }
+        // Backends end cleanly on deliberate stop; a throw here is a real crash.
+        this.send({ type: "status", state: "error" } as any);
+        this.send({ type: "error", code: "session_crashed", message: String(err) });
       } finally {
         this.active = false;
       }
@@ -140,28 +77,19 @@ export class Session {
 
     // Signal readiness immediately so the client can send its first prompt. For a
     // resumed session we know the id up front; for a new session the real id is
-    // learned from the init event after the first turn (sessionId stays "" here).
+    // learned from the backend's session_id event (sessionId stays "" here).
     this.send({ type: "session_started", sessionId: resume ?? "", projectPath, mode: policy.getMode() });
   }
 
   prompt(text: string): void {
-    if (!this.prompts || !this.emit) throw new Error("session not started");
+    if (!this.emit) throw new Error("session not started");
     this.turnNo += 1;
     this.turnBuffer = [];
     this.send({ type: "status", state: "thinking" } as any);
-    this.prompts.push({
-      type: "user",
-      message: { role: "user", content: text },
-      parent_tool_use_id: null,
-    });
+    this.backend.prompt(text);
   }
 
-  /**
-   * True while the SDK query loop is alive (between start() and stop()/crash).
-   * Note: during stop() teardown this can briefly read true after abort() until
-   * the loop's finally runs; a reattach in that window just replays a stale
-   * session_started with no follow-up, which is harmless.
-   */
+  /** True while the backend event loop is alive (between start() and stop()/crash). */
   isActive(): boolean {
     return this.active;
   }
@@ -171,13 +99,9 @@ export class Session {
     return this.projectPath;
   }
 
-  /**
-   * Stop routing this session's output to the client immediately (without awaiting
-   * teardown). Used when switching to a different project so a still-streaming turn
-   * does not bleed its deltas into the new project's conversation.
-   */
+  /** Stop routing output to the client immediately (project switch). */
   detachEmit(): void {
-    this.emit = () => {}; // swallow further output; prompt() still treats the session as live
+    this.emit = () => {};
   }
 
   /** Rebind the emit sink to a reconnected client and replay current state. */
@@ -193,20 +117,13 @@ export class Session {
     emit({ type: "status", state: this.currentStatus } as any);
   }
 
-  /**
-   * Interrupt the in-flight turn (barge-in) WITHOUT ending the session. Uses the
-   * SDK's query.interrupt() so the query loop stays alive and the next prompt — the
-   * user's barge-in question — is processed. (Aborting the controller instead would
-   * end the query entirely and the following prompt would hang with no live loop.)
-   */
+  /** Interrupt the in-flight turn (barge-in) WITHOUT ending the session. */
   abortTurn(): void {
-    void this.queryObj?.interrupt?.().catch(() => {});
+    void this.backend.interrupt().catch(() => {});
   }
 
   async stop(): Promise<void> {
-    this.prompts?.end();
-    this.abort?.abort();
-    this.queryObj = null;
+    await this.backend.stop();
     if (this.loop) await this.loop.catch(() => {});
   }
 }
