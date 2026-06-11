@@ -109,6 +109,16 @@ export class SessionManager {
     return this.sessions.get(sessionKey)?.session.isActive() ?? false;
   }
 
+  /** True if a LIVE bridge session is writing this (agent, sessionId) — its file
+   *  appends are our own output, not external laptop activity. */
+  ownsSession(agent: AgentName, sessionId: string): boolean {
+    for (const ls of this.sessions.values()) {
+      if (ls.agent !== agent || !ls.session.isActive()) continue;
+      if (ls.resumeId === sessionId || ls.session.backendSessionId === sessionId) return true;
+    }
+    return false;
+  }
+
   /** Returns true if any live session exists for the given project+agent pair. */
   hasForProject(projectPath: string, agent: AgentName): boolean {
     for (const ls of this.sessions.values()) {

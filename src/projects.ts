@@ -31,7 +31,7 @@ function readSafe(file: string): string | null {
   try { return readFileSync(file, "utf8"); } catch { return null; }
 }
 
-function cwdFromText(text: string): string | null {
+export function cwdFromText(text: string): string | null {
   // Claude session files start with metadata entries (last-prompt, mode,
   // permission-mode) that have no `cwd`; the cwd appears on later message lines.
   for (const line of text.split("\n")) {

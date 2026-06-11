@@ -100,6 +100,11 @@ export class Session {
     return this.projectPath;
   }
 
+  /** The backend's real session/thread id once learned (null before the first turn). */
+  get backendSessionId(): string | null {
+    return this.sessionId;
+  }
+
   /** Stop routing output to the client immediately (project switch). */
   detachEmit(): void {
     this.emit = () => {};

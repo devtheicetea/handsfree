@@ -240,6 +240,23 @@ describe("sessionKey routing", () => {
     expect(started.every((s: any) => "resumeId" in s && "agent" in s)).toBe(true); // all well-formed (no stale shape)
   });
 
+  it("ownsSession matches live sessions by resumeId and by learned backend id", async () => {
+    const store = { listProjects: () => [], listSessions: () => [], resolveResume: () => "thr_resumed", history: () => [] };
+    const manager = new SessionManager({
+      safelist: [],
+      stores: { claude: fakeStore(), codex: store as any },
+      makeSession: () => new Session(new FakeBackend()),   // FakeBackend's session_id event reports "sess-9"
+    });
+    await manager.open("/p", "codex", "latest", "n1", () => {});
+    await new Promise((r) => setTimeout(r, 20));            // let the backend's session_id event land
+    expect(manager.ownsSession("codex", "thr_resumed")).toBe(true);   // by resumeId
+    expect(manager.ownsSession("codex", "sess-9")).toBe(true);        // by learned id
+    expect(manager.ownsSession("claude", "thr_resumed")).toBe(false); // other agent
+    expect(manager.ownsSession("codex", "thr_other")).toBe(false);
+    await manager.stopAll();
+    expect(manager.ownsSession("codex", "thr_resumed")).toBe(false);  // dead sessions don't own
+  });
+
   it("re-sends history on reattach, before the buffer replay (restarted client is otherwise blank)", async () => {
     const items = [{ role: "user" as const, text: "from laptop", tools: [] }];
     const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => items };
