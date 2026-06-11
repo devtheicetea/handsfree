@@ -105,12 +105,12 @@ describe("BridgeServer", () => {
     const msgs = collect(ws);
     ws.send(JSON.stringify({ type: "hello" }));
     await waitFor(msgs, (m) => m.type === "hello_ok");
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new", nonce: "n0" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "sess-x1", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 30));
     expect(made).toBe(1);
     // The app re-sends open_session for the same project on every reconnect — the
-    // bridge must reattach, not tear down + recreate (which aborts the in-flight turn).
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "latest", nonce: "n1" }));
+    // bridge must reattach by resumeId, not tear down + recreate (which aborts the in-flight turn).
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "sess-x1", nonce: "n1" }));
     await waitFor(msgs, () => fake.reattached > 0);
     expect(made).toBe(1);            // no second session created
     expect(fake.reattached).toBe(1); // reattached instead
@@ -370,12 +370,13 @@ describe("BridgeServer", () => {
     await waitFor(msgs, (m) => m.type === "hello_ok");
 
     // First open_session: preflight runs (checks === 1), session starts.
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "new", agent: "codex", nonce: "n0" }));
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "sess-p1", agent: "codex", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 30));
     expect(checks).toBe(1);
 
-    // Re-open the same live session: preflight must be skipped entirely.
-    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "latest", agent: "codex", nonce: "n1" }));
+    // Re-open the same live session by its resumeId: preflight must be skipped entirely
+    // (hasForProject returns true) and the session must reattach by resumeId (not project+agent).
+    ws.send(JSON.stringify({ type: "open_session", projectPath: "/p", resume: "sess-p1", agent: "codex", nonce: "n1" }));
     await waitFor(msgs, () => fake.reattached > 0);
 
     // No codex_unavailable error must have arrived.

@@ -54,20 +54,16 @@ export class SessionManager {
 
   async open(projectPath: string, agent: AgentName, resume: string, nonce: string, emit: (m: BridgeToClient) => void): Promise<void> {
     const resumeId = this.stores[agent].resolveResume(projectPath, resume) ?? null;
-    // Try to reattach to an existing live session. Matching strategy:
-    // 1. If resumeId resolved to a real id, match any active session with that resumeId.
-    // 2. If resume is not "new" (e.g. "latest" resolved to null because there's no history),
-    //    fall back to any active session for the same project+agent — the client is asking
-    //    to reconnect to whatever is running, not to start fresh.
-    // "new" always bypasses reattach and creates a fresh session.
-    if (resume !== "new") {
+    // Reattach a still-live session ONLY when the resumed id matches exactly
+    // (reconnect path). Never match by (project, agent) — that would grab an
+    // arbitrary session when several are live for the same folder/agent.
+    if (resumeId) {
       for (const [key, ls] of this.sessions) {
-        if (!ls.session.isActive()) continue;
-        if (ls.projectPath !== projectPath || ls.agent !== agent) continue;
-        if (resumeId !== null && ls.resumeId !== null && ls.resumeId !== resumeId) continue;
-        emit({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId: ls.resumeId ?? "", mode: ls.policy.getMode() });
-        ls.session.reattach(this.tagged(key, emit));
-        return;
+        if (ls.resumeId === resumeId && ls.session.isActive()) {
+          emit({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId, mode: ls.policy.getMode() });
+          ls.session.reattach(this.tagged(key, emit));
+          return;
+        }
       }
     }
     const sessionKey = randomUUID();
