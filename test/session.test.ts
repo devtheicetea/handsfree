@@ -94,6 +94,28 @@ describe("Session (backend-agnostic shell)", () => {
     expect(clean.some((m) => m.type === "error")).toBe(false);
   });
 
+  it("surfaces a turn_failed as error{code:turn_failed} + done response + idle, keeping the session active", async () => {
+    const emitted: BridgeToClient[] = [];
+    const backend = new FakeBackend();
+    const session = new Session(backend);
+    await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: (m) => emitted.push(m) });
+    backend.failNext = "401 Unauthorized";
+    session.prompt("hi");
+    await tick();
+    const err = emitted.find((m) => m.type === "error") as { code: string; message: string } | undefined;
+    expect(err?.code).toBe("turn_failed");
+    expect(err?.message).toContain("401 Unauthorized");
+    expect(emitted.some((m) => m.type === "response" && (m as { done: boolean }).done)).toBe(true);
+    const states = (emitted.filter((m) => m.type === "status") as Array<{ state: string }>).map((s) => s.state);
+    expect(states).toContain("idle");
+    // the session stays alive and a follow-up prompt still works
+    expect(session.isActive()).toBe(true);
+    session.prompt("again");
+    await tick();
+    expect(emitted.some((m) => m.type === "response" && (m as { text: string }).text === "echo:again")).toBe(true);
+    await session.stop();
+  });
+
   it("numbers turns and clears the buffer on the next prompt, not on done", async () => {
     const emitted: BridgeToClient[] = [];
     const session = new Session(new FakeBackend());

@@ -25,7 +25,10 @@ const N = {
   itemStarted: "item/started",
   turnStarted: "turn/started",
   turnCompleted: "turn/completed",
+  error: "error",
 } as const;
+// TurnStatus enum value signalling the turn ended in failure (schema: TurnStatus).
+const TURN_STATUS_FAILED = "failed";
 const APPROVAL = {
   exec: "item/commandExecution/requestApproval",
   fileChange: "item/fileChange/requestApproval",
@@ -79,6 +82,8 @@ export class CodexBackend implements AgentBackend {
   private stopping = false;
   private crashError: Error | null = null;
   private projectPath = "";
+  /** Message from the most recent `error` notification, consumed by turn/completed. */
+  private lastTurnError: string | null = null;
   /** Prompts sent before the thread is ready; flushed right after session_id. */
   private pendingPrompts: string[] = [];
   /** fileChange items seen, by item id — input for the safelist path check. */
@@ -147,9 +152,24 @@ export class CodexBackend implements AgentBackend {
       if (typeof delta === "string" && delta) this.events.push({ kind: "text_delta", text: delta });
     } else if (method === N.turnStarted) {
       this.turnId = (params.turn as { id?: string } | undefined)?.id ?? null;
+      this.lastTurnError = null;
+    } else if (method === N.error) {
+      // app-server failure notification (schema: ErrorNotification). The human-
+      // readable message lives at params.error.message; held for turn/completed.
+      const msg = (params.error as { message?: unknown } | undefined)?.message;
+      if (typeof msg === "string" && msg) this.lastTurnError = msg;
     } else if (method === N.turnCompleted) {
       this.fileChanges.clear();
-      this.events.push({ kind: "turn_done" });
+      const turn = params.turn as { status?: string; error?: { message?: unknown } } | undefined;
+      if (turn?.status === TURN_STATUS_FAILED) {
+        // turn.error.message is the schema fallback when no `error` notification arrived.
+        const turnErr = typeof turn.error?.message === "string" ? turn.error.message : null;
+        const message = this.lastTurnError ?? turnErr ?? "codex turn failed";
+        this.lastTurnError = null;
+        this.events.push({ kind: "turn_failed", message });
+      } else {
+        this.events.push({ kind: "turn_done" });
+      }
     } else if (method === N.itemStarted) {
       const item = params.item as { id?: string; type?: string } | undefined;
       if (item?.id && item.type === FILE_CHANGE_ITEM_TYPE) this.fileChanges.set(item.id, item as Json);

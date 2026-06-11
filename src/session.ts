@@ -64,6 +64,11 @@ export class Session {
           } else if (ev.kind === "turn_done") {
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
             this.send({ type: "status", state: "idle" } as any);
+          } else if (ev.kind === "turn_failed") {
+            // The turn errored (auth/quota/etc.) but the session stays alive.
+            this.send({ type: "error", code: "turn_failed", message: ev.message } as any);
+            this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
+            this.send({ type: "status", state: "idle" } as any);
           }
         }
       } catch (err) {

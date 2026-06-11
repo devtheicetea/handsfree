@@ -6,7 +6,8 @@ export type AgentName = "claude" | "codex";
 export type AgentEvent =
   | { kind: "session_id"; id: string }   // real session/thread id, once known
   | { kind: "text_delta"; text: string } // streamed assistant text
-  | { kind: "turn_done" };               // the in-flight turn finished
+  | { kind: "turn_done" }                 // the in-flight turn finished
+  | { kind: "turn_failed"; message: string }; // turn ended in error; session stays alive
 
 export interface BackendStartOpts {
   projectPath: string;

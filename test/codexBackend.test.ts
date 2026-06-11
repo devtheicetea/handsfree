@@ -78,6 +78,29 @@ describe("CodexBackend", () => {
     expect(child.killed).toBe(true);
   });
 
+  it("maps a failed turn (error notification + turn/completed status=failed) to turn_failed, not turn_done", async () => {
+    const child = new FakeChild();
+    child.script((msg, write) => {
+      if (msg.method === "initialize") write({ id: msg.id, result: {} });
+      else if (msg.method === "thread/start") write({ id: msg.id, result: { thread: { id: "thr_1" } } });
+      else if (msg.method === "turn/start") {
+        write({ id: msg.id, result: { turn: { id: "turn_1", status: "inProgress" } } });
+        write({ method: "turn/started", params: { turn: { id: "turn_1" } } });
+        // app-server signals the failure: an `error` notification then a failed turn/completed
+        write({ method: "error", params: { error: { message: "401 Unauthorized: invalid API key" }, threadId: "thr_1", turnId: "turn_1", willRetry: false } });
+        write({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "failed", items: [] } } });
+      }
+    });
+    const b = new CodexBackend({ spawnFn: spawnOf(child) });
+    const iter = b.start({ projectPath: "/p", resume: undefined, evaluate: allow });
+    b.prompt("hi");
+    const evs = await collect(iter, (e) => e.some((x) => x.kind === "turn_failed"));
+    expect(evs).toContainEqual({ kind: "session_id", id: "thr_1" });
+    expect(evs).toContainEqual({ kind: "turn_failed", message: expect.stringContaining("401 Unauthorized") });
+    expect(evs.some((x) => x.kind === "turn_done")).toBe(false);
+    await b.stop();
+  });
+
   it("resumes via thread/resume when resume id is given", async () => {
     const child = new FakeChild();
     const seen: string[] = [];

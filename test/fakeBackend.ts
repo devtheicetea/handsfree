@@ -8,6 +8,8 @@ export class FakeBackend implements AgentBackend {
   interrupts = 0;
   startOpts: BackendStartOpts | null = null;
   crash: Error | null = null; // set before start() to simulate a crashing backend
+  /** When set, the next prompt() emits a turn_failed with this message instead of echoing. */
+  failNext: string | null = null;
 
   async *start(opts: BackendStartOpts): AsyncGenerator<AgentEvent, void> {
     this.startOpts = opts;
@@ -17,6 +19,12 @@ export class FakeBackend implements AgentBackend {
   }
   prompt(text: string): void {
     this.prompts.push(text);
+    if (this.failNext !== null) {
+      const message = this.failNext;
+      this.failNext = null;
+      this.events.push({ kind: "turn_failed", message });
+      return;
+    }
     this.events.push({ kind: "text_delta", text: `echo:${text}` });
     this.events.push({ kind: "turn_done" });
   }
