@@ -55,8 +55,9 @@ export function printPairing(
   config: Config,
   deps: HostDeps = { tailscaleIP, lanIP },
   out: (s: string) => void = (s) => process.stdout.write(s),
+  env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const host = resolveHost(process.env, deps);
+  const host = resolveHost(env, deps);
   const url = buildPairURL(host, config.port, config.token);
   out(`\nScan to connect Handsfree (or open this URL on the phone):\n${url}\n`);
   qrcode.generate(url, { small: true }, (qr) => out("\n" + qr + "\n"));
