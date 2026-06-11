@@ -76,6 +76,21 @@ describe("agent field", () => {
   });
 });
 
+describe("v0.3.0 client messages", () => {
+  it("parses list_sessions", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "list_sessions", projectPath: "/p", agent: "claude" }));
+    expect(r.ok).toBe(true);
+  });
+  it("parses open_session with a nonce", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "open_session", projectPath: "/p", agent: "claude", resume: "new", nonce: "n1" }));
+    expect(r.ok && r.value.type === "open_session" && (r.value as any).nonce).toBe("n1");
+  });
+  it("parses prompt routed by sessionKey", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "prompt", sessionKey: "k1", text: "hi" }));
+    expect(r.ok && r.value.type === "prompt" && (r.value as any).sessionKey).toBe("k1");
+  });
+});
+
 describe("mergeProjects", () => {
   const sp = (path: string, id: string, at: number) =>
     ({ path, lastSessionId: id, lastActive: at, lastMessage: null });

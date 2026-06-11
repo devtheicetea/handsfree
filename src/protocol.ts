@@ -1,37 +1,46 @@
 import { z } from "zod";
 import type { HistoryItem } from "./sessionHistory.js";
 import type { AgentName } from "./backends/types.js";
+import type { SessionMeta } from "./stores/types.js";
 
 export const agentSchema = z.enum(["claude", "codex"]).default("claude");
 
 // ---------- client -> bridge ----------
 export const helloSchema = z.object({ type: z.literal("hello"), token: z.string().optional() });
 export const listProjectsSchema = z.object({ type: z.literal("list_projects") });
+export const listSessionsSchema = z.object({ type: z.literal("list_sessions"), projectPath: z.string().min(1), agent: agentSchema });
 export const openSessionSchema = z.object({
   type: z.literal("open_session"),
   projectPath: z.string().min(1),
   resume: z.union([z.literal("latest"), z.literal("new"), z.string().min(1)]),
   agent: agentSchema,
+  nonce: z.string().min(1).optional(),
 });
-export const promptSchema = z.object({ type: z.literal("prompt"), projectPath: z.string().min(1), text: z.string().min(1), agent: agentSchema });
-export const permissionResponseSchema = z.object({
-  type: z.literal("permission_response"),
-  projectPath: z.string().min(1),
-  id: z.string().min(1),
-  decision: z.enum(["allow", "allow_session", "deny"]),
-  agent: agentSchema,
-});
-export const setModeSchema = z.object({
-  type: z.literal("set_mode"),
-  projectPath: z.string().min(1),
-  mode: z.enum(["safelist", "ask_all", "auto"]),
-  agent: agentSchema,
-});
-export const abortSchema = z.object({ type: z.literal("abort"), projectPath: z.string().min(1), agent: agentSchema });
+// Session-scoped messages: v0.3.0 routes by sessionKey; legacy routing used projectPath+agent.
+// Both forms are accepted so old tests and new tests can coexist during the migration.
+export const promptSchema = z.union([
+  z.object({ type: z.literal("prompt"), sessionKey: z.string().min(1), text: z.string().min(1) }),
+  z.object({ type: z.literal("prompt"), projectPath: z.string().min(1), text: z.string().min(1), agent: agentSchema }),
+]);
+export const permissionResponseSchema = z.union([
+  z.object({ type: z.literal("permission_response"), sessionKey: z.string().min(1), id: z.string().min(1), decision: z.enum(["allow", "allow_session", "deny"]) }),
+  z.object({ type: z.literal("permission_response"), projectPath: z.string().min(1), id: z.string().min(1), decision: z.enum(["allow", "allow_session", "deny"]), agent: agentSchema }),
+]);
+export const setModeSchema = z.union([
+  z.object({ type: z.literal("set_mode"), sessionKey: z.string().min(1), mode: z.enum(["safelist", "ask_all", "auto"]) }),
+  z.object({ type: z.literal("set_mode"), projectPath: z.string().min(1), mode: z.enum(["safelist", "ask_all", "auto"]), agent: agentSchema }),
+]);
+export const abortSchema = z.union([
+  z.object({ type: z.literal("abort"), sessionKey: z.string().min(1) }),
+  z.object({ type: z.literal("abort"), projectPath: z.string().min(1), agent: agentSchema }),
+]);
 
-export const clientMessageSchema = z.discriminatedUnion("type", [
+// clientMessageSchema uses z.union (not discriminatedUnion) because the session-scoped
+// schemas are themselves z.union shapes and cannot be nested into a discriminatedUnion.
+export const clientMessageSchema = z.union([
   helloSchema,
   listProjectsSchema,
+  listSessionsSchema,
   openSessionSchema,
   promptSchema,
   permissionResponseSchema,
@@ -58,14 +67,13 @@ export type ProjectInfo = {
 export type BridgeToClient =
   | { type: "hello_ok"; version: string }
   | { type: "projects"; projects: ProjectInfo[] }
-  // sessionId is "" for a brand-new session; the real id is only known after the
-  // first turn (learned from the SDK init event), so treat "" as "id unknown".
-  | { type: "session_started"; projectPath: string; sessionId: string; mode: PermissionModeName; agent: AgentName }
-  | { type: "status"; projectPath: string; state: "thinking" | "idle" | "error"; agent: AgentName }
-  | { type: "response"; projectPath: string; turn: number; text: string; done: boolean; agent: AgentName }
-  | { type: "permission_request"; projectPath: string; id: string; tool: string; input: unknown; detail: string; agent: AgentName }
-  | { type: "history"; projectPath: string; items: HistoryItem[]; agent: AgentName }
-  | { type: "error"; projectPath?: string; code: string; message: string; agent?: AgentName };
+  | { type: "sessions"; projectPath: string; agent: AgentName; sessions: SessionMeta[] }
+  | { type: "session_started"; nonce: string; sessionKey: string; projectPath: string; agent: AgentName; resumeId: string; mode: PermissionModeName }
+  | { type: "status"; sessionKey: string; state: "thinking" | "idle" | "error" }
+  | { type: "response"; sessionKey: string; turn: number; text: string; done: boolean }
+  | { type: "permission_request"; sessionKey: string; id: string; tool: string; input: unknown; detail: string }
+  | { type: "history"; sessionKey: string; items: HistoryItem[] }
+  | { type: "error"; sessionKey?: string; code: string; message: string };
 
 // ---------- parsing ----------
 export type ParseResult =
