@@ -153,6 +153,9 @@ export class BridgeServer {
           try {
             const version = await this.checkCodex(this.codexPath);
             this.logger?.info("codex version", { version });
+            if (!/\b0\.139\.\d+\b/.test(version)) {
+              this.logger?.info("codex version outside tested range — wire constants may need re-verification", { version });
+            }
           } catch (err) {
             this.sendToClient({ type: "error", projectPath: msg.projectPath, agent: msg.agent, code: "codex_unavailable", message: String(err) });
             return;

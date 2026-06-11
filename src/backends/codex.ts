@@ -10,8 +10,8 @@ import type { AgentBackend, AgentEvent, BackendStartOpts } from "./types.js";
 // Verified against a captured transcript of the pinned CLI (see the plan's
 // Task 12); if the transcript disagrees, fix THESE, not the call sites.
 // ---------------------------------------------------------------------------
-const SANDBOX_MODE = "workspaceWrite";
-const APPROVAL_POLICY = "onRequest";
+const SANDBOX_MODE = "workspace-write";
+const APPROVAL_POLICY = "on-request";
 const M = {
   initialize: "initialize",
   initialized: "initialized",
