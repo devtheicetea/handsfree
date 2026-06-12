@@ -210,7 +210,9 @@ export class BridgeServer {
       case "set_mode":
       case "permission_response": {
         const ok = this.sessions.route(msg);
-        if (!ok) this.send(ws, { type: "error", code: "no_session", message: "open the project first" });
+        // Tag the failure with the sessionKey so the client can silently revive the
+        // session (the bridge forgot it on restart, but its transcript is on disk).
+        if (!ok) this.send(ws, { type: "error", sessionKey: msg.sessionKey, code: "no_session", message: "session not found — reopen it" });
         return;
       }
       case "hello":

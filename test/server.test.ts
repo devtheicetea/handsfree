@@ -524,4 +524,22 @@ describe("BridgeServer", () => {
     expect((started as any).sessionKey).toBeTruthy();
     ws.close(); rmSync(home, { recursive: true, force: true });
   });
+
+  it("replies no_session tagged with the sessionKey for an unknown session", async () => {
+    const fake = new FakeSession();
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      makeSession: () => fake as any,
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    const msgs = collect(ws);
+    ws.send(JSON.stringify({ type: "hello" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    ws.send(JSON.stringify({ type: "prompt", sessionKey: "gone-key", text: "hi" }));
+    const err = await waitFor(msgs, (m) => m.type === "error");
+    expect((err as any).code).toBe("no_session");
+    expect((err as any).sessionKey).toBe("gone-key");
+    ws.close();
+  });
 });
