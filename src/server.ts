@@ -226,6 +226,9 @@ export class BridgeServer {
       case "abort":
       case "set_mode":
       case "permission_response": {
+        if (msg.type === "prompt") {
+          this.logger?.info("prompt", { sessionKey: msg.sessionKey, textLen: msg.text.length, attachments: msg.attachments?.length ?? 0 });
+        }
         const ok = this.sessions.route(msg);
         // Tag the failure with the sessionKey so the client can silently revive the
         // session (the bridge forgot it on restart, but its transcript is on disk).
