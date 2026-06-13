@@ -246,19 +246,23 @@ describe("BridgeServer", () => {
     ws.close();
   });
 
-  it("rejects a second concurrent client as busy", async () => {
+  it("a second client takes over; the first is superseded", async () => {
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
+      checkCodex: async () => "codex 0.139.0",
     });
     const port = await server.listen();
     const a = await connect(port);
     a.send(JSON.stringify({ type: "hello" }));
-    await next(a);
+    await next(a);   // hello_ok for the first client
+    const aSuperseded = next(a);   // listen before b connects (avoids a message race)
     const b = await connect(port);
     b.send(JSON.stringify({ type: "hello" }));
-    const msg = await next(b);
-    expect(msg).toMatchObject({ type: "error", code: "busy" });
+    // The new client connects successfully...
+    expect(await next(b)).toMatchObject({ type: "hello_ok" });
+    // ...and the old one is told it was superseded.
+    expect(await aSuperseded).toMatchObject({ type: "error", code: "superseded" });
     a.close(); b.close();
   });
 

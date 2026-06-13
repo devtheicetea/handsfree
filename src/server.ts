@@ -37,8 +37,9 @@ export class BridgeServer {
   /** Cached Codex availability (preflight), so we probe the binary once, not on every (re)connect. */
   private codexAvailable: boolean | null = null;
   private client: WebSocket | null = null;
-  // Single-client bridge (v1): one active client at a time. A second connection
-  // is rejected as "busy" before it can reach open_session.
+  // Single-client bridge: one active client at a time, but a fresh connection
+  // takes over from the existing one (last-writer-wins) so the single user is
+  // never locked out by a stale half-open socket.
   private readonly sessions: SessionManager;
   private disconnectTimer: NodeJS.Timeout | null = null;
   private readonly logger?: Logger;
@@ -128,11 +129,6 @@ export class BridgeServer {
 
   private onConnection(ws: WebSocket): void {
     let helloDone = false;
-    const isBusy = !!(this.client && this.client.readyState === WebSocket.OPEN);
-
-    if (!isBusy) {
-      this.client = ws;
-    }
 
     ws.on("message", async (data) => {
       const parsed = parseClientMessage(data.toString());
@@ -147,14 +143,18 @@ export class BridgeServer {
           this.send(ws, { type: "error", code: "expected_hello", message: "send hello first" });
           return;
         }
-        if (isBusy) {
-          ws.send(encode({ type: "error", code: "busy", message: "Another client is connected" }), () => ws.close());
-          return;
-        }
         if (this.config.token !== null && msg.token !== this.config.token) {
           ws.send(encode({ type: "error", code: "unauthorized", message: "bad token" }), () => ws.close());
           return;
         }
+        // Single-user app: a freshly-authenticated client takes over from any
+        // existing one (which may be a stale half-open socket) rather than being
+        // locked out. The old socket is told it was superseded and closed.
+        if (this.client && this.client !== ws && this.client.readyState === WebSocket.OPEN) {
+          const old = this.client;
+          old.send(encode({ type: "error", code: "superseded", message: "Connected on another device" }), () => old.close());
+        }
+        this.client = ws;
         helloDone = true;
         const codex = await this.detectCodex();
         this.send(ws, { type: "hello_ok", version: VERSION, agents: { claude: true, codex } });
