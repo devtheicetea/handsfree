@@ -12,6 +12,16 @@ describe("Phase 3 tagged client messages", () => {
     const r = parseClientMessage(JSON.stringify({ type: "prompt", text: "hi" }));
     expect(r.ok).toBe(false);
   });
+  it("parses a prompt with image attachments and empty text", () => {
+    const r = parseClientMessage(JSON.stringify({
+      type: "prompt", sessionKey: "k1", text: "",
+      attachments: [{ mime: "image/jpeg", dataBase64: "QUJD" }],
+    }));
+    expect(r.ok).toBe(true);
+    if (r.ok && r.value.type === "prompt") {
+      expect(r.value.attachments).toEqual([{ mime: "image/jpeg", dataBase64: "QUJD" }]);
+    }
+  });
   it("parses abort/set_mode/permission_response with sessionKey", () => {
     expect(parseClientMessage(JSON.stringify({ type: "abort", sessionKey: "k1" })).ok).toBe(true);
     expect(parseClientMessage(JSON.stringify({ type: "set_mode", sessionKey: "k1", mode: "safelist" })).ok).toBe(true);

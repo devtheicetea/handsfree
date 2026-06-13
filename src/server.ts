@@ -13,7 +13,7 @@ import type { AgentName } from "./backends/types.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const DISCONNECT_GRACE_MS = 120_000;
 const HISTORY_LIMIT = 25; // turns per view_session snapshot (matches the manager's open snapshot)
 

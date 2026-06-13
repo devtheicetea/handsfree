@@ -1,4 +1,4 @@
-import type { AgentBackend } from "./backends/types.js";
+import type { AgentBackend, ImageAttachment } from "./backends/types.js";
 import type { PermissionPolicy } from "./permissions.js";
 import type { BridgeToClient } from "./protocol.js";
 
@@ -82,12 +82,12 @@ export class Session {
 
   }
 
-  prompt(text: string): void {
+  prompt(text: string, attachments?: ImageAttachment[]): void {
     if (!this.emit) throw new Error("session not started");
     this.turnNo += 1;
     this.turnBuffer = [];
     this.send({ type: "status", state: "thinking" } as any);
-    this.backend.prompt(text);
+    this.backend.prompt(text, attachments);
   }
 
   /** True while the backend event loop is alive (between start() and stop()/crash). */

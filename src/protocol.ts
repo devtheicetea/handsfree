@@ -17,7 +17,15 @@ export const openSessionSchema = z.object({
   nonce: z.string().min(1),
 });
 // Session-scoped messages: v0.3.0 routes by sessionKey.
-export const promptSchema = z.object({ type: z.literal("prompt"), sessionKey: z.string().min(1), text: z.string().min(1) });
+// v0.6.0: an optional image attachment list (base64). text may be empty when
+// attachments are present (image-only message); the client gates send.
+export const imageAttachmentSchema = z.object({ mime: z.string().min(1), dataBase64: z.string().min(1) });
+export const promptSchema = z.object({
+  type: z.literal("prompt"),
+  sessionKey: z.string().min(1),
+  text: z.string(),
+  attachments: z.array(imageAttachmentSchema).optional(),
+});
 export const permissionResponseSchema = z.object({
   type: z.literal("permission_response"), sessionKey: z.string().min(1),
   id: z.string().min(1), decision: z.enum(["allow", "allow_session", "deny"]),

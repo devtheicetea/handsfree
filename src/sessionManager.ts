@@ -97,7 +97,7 @@ export class SessionManager {
     const ls = this.sessions.get(msg.sessionKey);
     if (!ls) return false;
     switch (msg.type) {
-      case "prompt": ls.session.prompt(msg.text); return true;
+      case "prompt": ls.session.prompt(msg.text, msg.attachments); return true;
       case "abort": ls.session.abortTurn(); ls.policy.abortAll(); return true;
       case "set_mode": ls.policy.setMode(msg.mode); return true;
       case "permission_response": ls.policy.resolve(msg.id, msg.decision); return true;

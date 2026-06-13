@@ -2,7 +2,7 @@ import { query as realQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Pushable } from "../pushable.js";
 import { awaitSessionFile } from "../sessionFile.js";
-import type { AgentBackend, AgentEvent, BackendStartOpts } from "./types.js";
+import type { AgentBackend, AgentEvent, BackendStartOpts, ImageAttachment } from "./types.js";
 
 export type QueryFn = (params: {
   prompt: AsyncIterable<SDKUserMessage>;
@@ -89,8 +89,17 @@ export class ClaudeBackend implements AgentBackend {
     }
   }
 
-  prompt(text: string): void {
-    this.prompts.push({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null });
+  prompt(text: string, attachments?: ImageAttachment[]): void {
+    // With images, content becomes an array of blocks (images first, then the
+    // text); without, it stays a plain string. media_type is constrained by the
+    // SDK to a small union — we only ever send downscaled JPEG/PNG from the app.
+    const content: SDKUserMessage["message"]["content"] = attachments?.length
+      ? ([
+          ...attachments.map((a) => ({ type: "image", source: { type: "base64", media_type: a.mime, data: a.dataBase64 } })),
+          ...(text.trim() ? [{ type: "text", text }] : []),
+        ] as unknown as SDKUserMessage["message"]["content"])
+      : text;
+    this.prompts.push({ type: "user", message: { role: "user", content }, parent_tool_use_id: null });
   }
 
   async interrupt(): Promise<void> {

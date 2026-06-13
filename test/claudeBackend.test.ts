@@ -44,6 +44,53 @@ describe("ClaudeBackend", () => {
     await b.stop();
   });
 
+  it("builds image content blocks when the prompt has attachments", async () => {
+    let captured: any = null;
+    const queryFn: QueryFn = ({ prompt }) => {
+      async function* gen() {
+        let first = true;
+        for await (const userMsg of prompt as AsyncIterable<any>) {
+          if (first) { first = false; yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any; }
+          captured = userMsg.message.content;
+          yield { type: "result", subtype: "success", session_id: "s", result: "" } as any;
+        }
+      }
+      const g = gen() as any; g.setPermissionMode = async () => {}; return g;
+    };
+    const b = new ClaudeBackend({ queryFn, waitForSessionFile: async () => {} });
+    const iter = b.start({ projectPath: "/p", resume: undefined, evaluate });
+    b.prompt("look at this", [{ mime: "image/jpeg", dataBase64: "QUJD" }]);
+    await collect(iter, (e) => e.some((x) => x.kind === "turn_done"));
+    expect(captured).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "QUJD" } },
+      { type: "text", text: "look at this" },
+    ]);
+    await b.stop();
+  });
+
+  it("omits the text block for an image-only prompt", async () => {
+    let captured: any = null;
+    const queryFn: QueryFn = ({ prompt }) => {
+      async function* gen() {
+        let first = true;
+        for await (const userMsg of prompt as AsyncIterable<any>) {
+          if (first) { first = false; yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any; }
+          captured = userMsg.message.content;
+          yield { type: "result", subtype: "success", session_id: "s", result: "" } as any;
+        }
+      }
+      const g = gen() as any; g.setPermissionMode = async () => {}; return g;
+    };
+    const b = new ClaudeBackend({ queryFn, waitForSessionFile: async () => {} });
+    const iter = b.start({ projectPath: "/p", resume: undefined, evaluate });
+    b.prompt("", [{ mime: "image/png", dataBase64: "QUJD" }]);
+    await collect(iter, (e) => e.some((x) => x.kind === "turn_done"));
+    expect(captured).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } },
+    ]);
+    await b.stop();
+  });
+
   it("passes strict options and wires evaluate into canUseTool", async () => {
     let captured: any;
     const queryFn: QueryFn = ({ options }) => {

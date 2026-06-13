@@ -2,6 +2,9 @@ import type { PermissionResult } from "../permissions.js";
 
 export type AgentName = "claude" | "codex";
 
+/** A base64-encoded image attached to a prompt (v0.6.0). */
+export interface ImageAttachment { mime: string; dataBase64: string; }
+
 /** Normalized stream every backend emits; Session consumes it agnostic of agent. */
 export type AgentEvent =
   | { kind: "session_id"; id: string }   // real session/thread id, once known
@@ -25,7 +28,7 @@ export interface BackendStartOpts {
  */
 export interface AgentBackend {
   start(opts: BackendStartOpts): AsyncIterable<AgentEvent>;
-  prompt(text: string): void;
+  prompt(text: string, attachments?: ImageAttachment[]): void;
   /** Barge-in: end the in-flight turn, keep the session alive. */
   interrupt(): Promise<void>;
   stop(): Promise<void>;
