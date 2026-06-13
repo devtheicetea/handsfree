@@ -13,7 +13,7 @@ import type { AgentName } from "./backends/types.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const DISCONNECT_GRACE_MS = 120_000;
 const HISTORY_LIMIT = 25; // turns per view_session snapshot (matches the manager's open snapshot)
 
@@ -34,6 +34,8 @@ export class BridgeServer {
   private readonly stores: { claude: SessionStore; codex: SessionStore };
   private readonly checkCodex: (codexPath: string | null) => Promise<string>;
   private readonly codexPath: string | null;
+  /** Cached Codex availability (preflight), so we probe the binary once, not on every (re)connect. */
+  private codexAvailable: boolean | null = null;
   private client: WebSocket | null = null;
   // Single-client bridge (v1): one active client at a time. A second connection
   // is rejected as "busy" before it can reach open_session.
@@ -104,6 +106,26 @@ export class BridgeServer {
     if (this.client) this.send(this.client, msg);
   }
 
+  /**
+   * Preflight Codex once and cache the result. Single source of truth for both
+   * the `hello_ok` capability advertisement and the `open_session` gate, so the
+   * binary is probed once per connection rather than on every (re)connect/open.
+   */
+  private async detectCodex(): Promise<boolean> {
+    if (this.codexAvailable !== null) return this.codexAvailable;
+    try {
+      const version = await this.checkCodex(this.codexPath);
+      this.logger?.info("codex version", { version });
+      if (!/\b0\.139\.\d+\b/.test(version)) {
+        this.logger?.info("codex version outside tested range — wire constants may need re-verification", { version });
+      }
+      this.codexAvailable = true;
+    } catch {
+      this.codexAvailable = false;
+    }
+    return this.codexAvailable;
+  }
+
   private onConnection(ws: WebSocket): void {
     let helloDone = false;
     const isBusy = !!(this.client && this.client.readyState === WebSocket.OPEN);
@@ -134,7 +156,8 @@ export class BridgeServer {
           return;
         }
         helloDone = true;
-        this.send(ws, { type: "hello_ok", version: VERSION });
+        const codex = await this.detectCodex();
+        this.send(ws, { type: "hello_ok", version: VERSION, agents: { claude: true, codex } });
         // The client reconnected (or connected fresh) — cancel any pending
         // sustained-disconnect teardown so live sessions are preserved.
         if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
@@ -179,14 +202,8 @@ export class BridgeServer {
       case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, agent: msg.agent, resume: msg.resume });
         if (msg.agent === "codex" && !this.sessions.hasForProject(msg.projectPath, msg.agent)) {
-          try {
-            const version = await this.checkCodex(this.codexPath);
-            this.logger?.info("codex version", { version });
-            if (!/\b0\.139\.\d+\b/.test(version)) {
-              this.logger?.info("codex version outside tested range — wire constants may need re-verification", { version });
-            }
-          } catch (err) {
-            this.sendToClient({ type: "error", code: "codex_unavailable", message: String(err) });
+          if (!(await this.detectCodex())) {
+            this.sendToClient({ type: "error", code: "codex_unavailable", message: "codex is not available on this machine" });
             return;
           }
         }

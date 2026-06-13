@@ -60,7 +60,7 @@ export type ProjectInfo = {
 };
 
 export type BridgeToClient =
-  | { type: "hello_ok"; version: string }
+  | { type: "hello_ok"; version: string; agents: { claude: boolean; codex: boolean } }
   | { type: "projects"; projects: ProjectInfo[] }
   | { type: "sessions"; projectPath: string; agent: AgentName; sessions: SessionMeta[] }
   | { type: "session_started"; nonce: string; sessionKey: string; projectPath: string; agent: AgentName; resumeId: string; mode: PermissionModeName }

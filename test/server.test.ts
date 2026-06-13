@@ -330,15 +330,29 @@ describe("BridgeServer", () => {
     rmSync(claudeHome, { recursive: true, force: true });
   });
 
-  it("reports protocol version 0.4.0 in hello_ok", async () => {
+  it("reports protocol version and agent capabilities in hello_ok", async () => {
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
+      checkCodex: async () => "codex 0.139.0",
     });
     const port = await server.listen();
     const ws = await connect(port);
     ws.send(JSON.stringify({ type: "hello" }));
-    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.4.0" });
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.5.0", agents: { claude: true, codex: true } });
+    ws.close();
+  });
+
+  it("advertises codex: false in hello_ok when the preflight fails", async () => {
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
+      makeSession: () => new FakeSession() as any,
+      checkCodex: async () => { throw new CodexUnavailableError("cannot run codex"); },
+    });
+    const port = await server.listen();
+    const ws = await connect(port);
+    ws.send(JSON.stringify({ type: "hello" }));
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", agents: { claude: true, codex: false } });
     ws.close();
   });
 
