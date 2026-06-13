@@ -7,12 +7,15 @@ import { titleFrom, listSessionsFor } from "../src/projects.js";
 const line = (o: unknown) => JSON.stringify(o);
 
 describe("titleFrom", () => {
-  it("prefers an ai-title entry", () => {
+  it("prefers an ai-title entry (Claude Code's aiTitle field)", () => {
     const jsonl = [
-      line({ type: "ai-title", value: "Fix the parser" }),
+      line({ type: "ai-title", aiTitle: "Fix the parser" }),
       line({ type: "user", message: { role: "user", content: "do the thing" } }),
     ].join("\n");
     expect(titleFrom(jsonl)).toBe("Fix the parser");
+  });
+  it("accepts a legacy ai-title `value` field too", () => {
+    expect(titleFrom(line({ type: "ai-title", value: "Legacy title" }))).toBe("Legacy title");
   });
   it("falls back to the first user prompt (truncated)", () => {
     const long = "x".repeat(100);
@@ -45,7 +48,7 @@ describe("titleFrom", () => {
   it("still prefers an ai-title over a slash command", () => {
     const jsonl = [
       line({ type: "user", message: { role: "user", content: "<command-name>foo</command-name>" } }),
-      line({ type: "ai-title", value: "Real summary" }),
+      line({ type: "ai-title", aiTitle: "Real summary" }),
     ].join("\n");
     expect(titleFrom(jsonl)).toBe("Real summary");
   });
@@ -57,7 +60,7 @@ describe("listSessionsFor", () => {
     const dir = join(home, "projects", "-Users-me-app");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "s1.jsonl"), [
-      line({ cwd: "/Users/me/app", type: "ai-title", value: "First" }),
+      line({ cwd: "/Users/me/app", type: "ai-title", aiTitle: "First" }),
       line({ type: "user", message: { role: "user", content: "hi" } }),
       line({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "yo" }] } }),
     ].join("\n") + "\n");

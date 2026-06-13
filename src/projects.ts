@@ -192,9 +192,13 @@ export function titleFrom(jsonlText: string): string {
   for (const raw of jsonlText.split("\n")) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
-    let o: { type?: string; value?: unknown; message?: { content?: unknown } };
+    let o: { type?: string; value?: unknown; aiTitle?: unknown; message?: { content?: unknown } };
     try { o = JSON.parse(trimmed); } catch { continue; }
-    if (o.type === "ai-title" && typeof o.value === "string" && o.value.trim()) return truncate(o.value.trim(), 60);
+    if (o.type === "ai-title") {
+      // Claude Code writes the generated summary under `aiTitle`; older fixtures use `value`.
+      const t = typeof o.aiTitle === "string" ? o.aiTitle : (typeof o.value === "string" ? o.value : "");
+      if (t.trim()) return truncate(t.trim(), 60);
+    }
     if (firstUser === null && o.type === "user") {
       const raw = userContentText(o.message?.content);
       const cleaned = raw === null ? "" : cleanTitle(raw);
