@@ -111,6 +111,29 @@ describe("ClaudeBackend", () => {
     await b.stop();
   });
 
+  it("canUseTool adds updatedInput to allow results and passes deny through", async () => {
+    let captured: any;
+    const queryFn: QueryFn = ({ options }) => {
+      captured = options;
+      async function* gen() { yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any; }
+      const g = gen() as any; g.setPermissionMode = async () => {}; return g;
+    };
+    const b = new ClaudeBackend({ queryFn, waitForSessionFile: async () => {} });
+    const iter = b.start({
+      projectPath: "/x", resume: undefined,
+      evaluate: async (tool) => tool === "Bash" ? { behavior: "allow" } : { behavior: "deny", message: "no" },
+    });
+    await collect(iter, (e) => e.length >= 1);
+    const ctx = { signal: new AbortController().signal, toolUseID: "t" };
+    // allow must carry updatedInput (the SDK rejects allow without it)
+    expect(await captured.canUseTool("Bash", { command: "ls" }, ctx))
+      .toEqual({ behavior: "allow", updatedInput: { command: "ls" } });
+    // deny passes through unchanged
+    expect(await captured.canUseTool("Write", { path: "x" }, ctx))
+      .toEqual({ behavior: "deny", message: "no" });
+    await b.stop();
+  });
+
   it("interrupt() uses query.interrupt, not the abort controller", async () => {
     let interrupts = 0;
     const queryFn: QueryFn = ({ prompt }) => {

@@ -58,7 +58,13 @@ export class ClaudeBackend implements AgentBackend {
         settingSources: ["project"],
         includePartialMessages: true,
         abortController: this.abort,
-        canUseTool: async (toolName, input) => opts.evaluate(toolName, input),
+        canUseTool: async (toolName, input) => {
+          // The Agent SDK requires an `allow` result to carry `updatedInput`;
+          // echo the (unchanged) input back so allowed tools don't fail schema
+          // validation. Deny results pass through untouched.
+          const r = await opts.evaluate(toolName, input);
+          return r.behavior === "allow" ? { behavior: "allow", updatedInput: input } : r;
+        },
       },
     });
     this.queryObj = q;
