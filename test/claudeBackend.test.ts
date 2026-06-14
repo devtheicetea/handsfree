@@ -134,6 +134,22 @@ describe("ClaudeBackend", () => {
     await b.stop();
   });
 
+  it("passes the configured model to the query (and omits it when unset)", async () => {
+    let withModel: any, withoutModel: any;
+    const capture = (sink: (o: any) => void): QueryFn => ({ options }) => {
+      sink(options);
+      async function* gen() { yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any; }
+      const g = gen() as any; g.setPermissionMode = async () => {}; return g;
+    };
+    const b1 = new ClaudeBackend({ queryFn: capture((o) => { withModel = o; }), waitForSessionFile: async () => {}, model: "sonnet" });
+    await collect(b1.start({ projectPath: "/x", resume: undefined, evaluate }), (e) => e.length >= 1);
+    expect(withModel.model).toBe("sonnet");
+
+    const b2 = new ClaudeBackend({ queryFn: capture((o) => { withoutModel = o; }), waitForSessionFile: async () => {} });
+    await collect(b2.start({ projectPath: "/x", resume: undefined, evaluate }), (e) => e.length >= 1);
+    expect(withoutModel.model).toBeUndefined();
+  });
+
   it("interrupt() uses query.interrupt, not the abort controller", async () => {
     let interrupts = 0;
     const queryFn: QueryFn = ({ prompt }) => {

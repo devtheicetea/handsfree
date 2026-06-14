@@ -7,6 +7,8 @@ export interface Config {
   safelist: string[];
   /** Path to the codex binary; null = resolve `codex` from PATH. */
   codexPath: string | null;
+  /** Model for Claude sessions (e.g. "sonnet"/"opus" or a full id); null = SDK default. */
+  model?: string | null;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -23,5 +25,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     token: env.HANDSFREE_TOKEN ?? null,
     safelist,
     codexPath: env.HANDSFREE_CODEX_PATH?.trim() || null,
+    model: env.HANDSFREE_MODEL?.trim() || null,
   };
 }

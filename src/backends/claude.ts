@@ -9,6 +9,7 @@ export type QueryFn = (params: {
   options?: {
     cwd?: string;
     resume?: string;
+    model?: string;
     permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
     settingSources?: ("user" | "project" | "local")[];
     includePartialMessages?: boolean;
@@ -27,12 +28,15 @@ export type QueryFn = (params: {
 export interface ClaudeBackendDeps {
   queryFn?: QueryFn;
   waitForSessionFile?: (sessionId: string) => Promise<void>;
+  /** Model id/alias for the session; undefined/null = SDK default. */
+  model?: string | null;
 }
 
 /** Use-once Claude Agent SDK backend; owns one query() for the session's lifetime. */
 export class ClaudeBackend implements AgentBackend {
   private readonly queryFn: QueryFn;
   private readonly waitForSessionFile: (sessionId: string) => Promise<void>;
+  private readonly model: string | null;
   private readonly prompts = new Pushable<SDKUserMessage>();
   private readonly abort = new AbortController();
   private queryObj: { interrupt?: () => Promise<void> } | null = null;
@@ -41,6 +45,7 @@ export class ClaudeBackend implements AgentBackend {
   constructor(deps: ClaudeBackendDeps = {}) {
     this.queryFn = deps.queryFn ?? (realQuery as unknown as QueryFn);
     this.waitForSessionFile = deps.waitForSessionFile ?? ((id) => awaitSessionFile(id));
+    this.model = deps.model ?? null;
   }
 
   async *start(opts: BackendStartOpts): AsyncGenerator<AgentEvent, void> {
@@ -51,6 +56,7 @@ export class ClaudeBackend implements AgentBackend {
       options: {
         cwd: opts.projectPath,
         resume: opts.resume,
+        ...(this.model ? { model: this.model } : {}),
         permissionMode: "default",
         // Bridge is the authoritative permission gate (Phase 1.5 spec §1): load
         // only project settings (keeps CLAUDE.md) and drop the user's global

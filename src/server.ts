@@ -58,6 +58,7 @@ export class BridgeServer {
       makeSession: deps.makeSession,
       stores: this.stores,
       codexPath: this.codexPath,
+      model: this.config.model,
     });
     this.watcher = (deps.makeWatcher ?? ((d) => new SessionWatcher(d)))({
       claudeHome: deps.claudeHome,

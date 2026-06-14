@@ -24,6 +24,7 @@ export interface SessionManagerDeps {
   makeSession?: (agent: AgentName, projectPath: string) => Session;
   stores?: { claude: SessionStore; codex: SessionStore };
   codexPath?: string | null;
+  model?: string | null;
 }
 
 /**
@@ -40,9 +41,10 @@ export class SessionManager {
   constructor(deps: SessionManagerDeps) {
     this.safelist = deps.safelist;
     const codexPath = deps.codexPath ?? null;
+    const model = deps.model ?? null;
     this.makeSession = deps.makeSession ?? ((agent) =>
       agent === "claude"
-        ? new Session(new ClaudeBackend())
+        ? new Session(new ClaudeBackend({ model }))
         : new Session(new CodexBackend({ codexPath })));
     this.stores = deps.stores ?? { claude: new ClaudeStore(), codex: new CodexStore() };
   }
