@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Session } from "./session.js";
-import { PermissionPolicy } from "./permissions.js";
+import { PermissionPolicy, type AskRequest } from "./permissions.js";
 import { ClaudeBackend } from "./backends/claude.js";
 import { CodexBackend } from "./backends/codex.js";
 import type { AgentName } from "./backends/types.js";
@@ -52,6 +52,21 @@ export class SessionManager {
     return (m: BridgeToClient) => emit({ ...m, sessionKey } as BridgeToClient);
   }
 
+  /** Build a permission_request message from a pending ask (sessionKey added by `tagged`). */
+  private permissionRequestMsg(req: AskRequest): BridgeToClient {
+    return {
+      type: "permission_request", id: req.id, tool: req.tool, input: req.input,
+      detail: req.input && typeof req.input === "object" ? `${req.tool} ${JSON.stringify(req.input).slice(0, 180)}` : req.tool,
+    } as BridgeToClient;
+  }
+
+  /** Re-send any still-pending permission requests to a (re)connected client. */
+  private replayPending(key: string, ls: LiveSession, emit: (m: BridgeToClient) => void): void {
+    for (const req of ls.policy.pendingRequests()) {
+      this.tagged(key, emit)(this.permissionRequestMsg(req));
+    }
+  }
+
   async open(projectPath: string, agent: AgentName, resume: string, nonce: string, emit: (m: BridgeToClient) => void): Promise<void> {
     const resumeId = this.stores[agent].resolveResume(projectPath, resume) ?? null;
     // Reattach a still-live session ONLY when the resumed id matches exactly
@@ -67,16 +82,14 @@ export class SessionManager {
           // would make the conversation non-empty and the seed would be skipped.
           this.tagged(key, emit)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
           ls.session.reattach(this.tagged(key, emit));
+          this.replayPending(key, ls, emit);   // re-surface a permission prompt the client missed
           return;
         }
       }
     }
     const sessionKey = randomUUID();
     const policy = new PermissionPolicy(this.safelist, (req) =>
-      this.tagged(sessionKey, emit)({
-        type: "permission_request", id: req.id, tool: req.tool, input: req.input,
-        detail: req.input && typeof req.input === "object" ? `${req.tool} ${JSON.stringify(req.input).slice(0, 180)}` : req.tool,
-      } as BridgeToClient));
+      this.tagged(sessionKey, emit)(this.permissionRequestMsg(req)));
     const session = this.makeSession(agent, projectPath);
     this.sessions.set(sessionKey, { session, policy, projectPath, agent, resumeId });
     emit({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
@@ -88,7 +101,10 @@ export class SessionManager {
   /** Replay every live session's current state to a (re)connected client. */
   reattachAll(emit: (m: BridgeToClient) => void): void {
     for (const [key, ls] of this.sessions) {
-      if (ls.session.isActive()) ls.session.reattach(this.tagged(key, emit));
+      if (ls.session.isActive()) {
+        ls.session.reattach(this.tagged(key, emit));
+        this.replayPending(key, ls, emit);   // re-surface any missed permission prompt
+      }
     }
   }
 

@@ -11,6 +11,7 @@ export type Decision = "allow" | "allow_session" | "deny";
 interface Pending {
   resolve: (r: PermissionResult) => void;
   tool: string;
+  input: unknown;
 }
 
 export class PermissionPolicy {
@@ -39,10 +40,15 @@ export class PermissionPolicy {
     }
     const id = randomUUID();
     const promise = new Promise<PermissionResult>((resolve) => {
-      this.pending.set(id, { resolve, tool });
+      this.pending.set(id, { resolve, tool, input });
     });
     this.onAsk({ id, tool, input });
     return promise;
+  }
+
+  /** Requests still awaiting a decision — replayed to a client on reattach. */
+  pendingRequests(): AskRequest[] {
+    return [...this.pending].map(([id, p]) => ({ id, tool: p.tool, input: p.input }));
   }
 
   resolve(id: string, decision: Decision): void {

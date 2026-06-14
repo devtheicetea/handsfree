@@ -191,6 +191,28 @@ describe("SessionManager", () => {
     expect(statuses.every((m) => (m as any).sessionKey === openKey)).toBe(true);
   });
 
+  it("replays a pending permission request on reattach", async () => {
+    let backend: FakeBackend | null = null;
+    const manager = new SessionManager({
+      safelist: [],   // every tool asks
+      stores: { claude: emptyStore, codex: emptyStore },
+      makeSession: () => { backend = new FakeBackend(); return new Session(backend); },
+    });
+    let key = "";
+    await manager.open("/p", "claude", "new", "n1", (m) => { if (m.type === "session_started") key = (m as any).sessionKey; });
+    // The backend asks for a tool -> a pending permission the client must see.
+    void backend!.startOpts!.evaluate("Bash", { command: "ls" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // A (re)connecting client replays state — the pending prompt must re-surface.
+    const replayed: BridgeToClient[] = [];
+    manager.reattachAll((m) => replayed.push(m));
+    const req = replayed.find((m) => m.type === "permission_request") as any;
+    expect(req).toBeDefined();
+    expect(req.tool).toBe("Bash");
+    expect(req.sessionKey).toBe(key);
+  });
+
   it("resolves resume through the matching agent's store", async () => {
     const calls: string[] = [];
     const store = (tag: string): SessionStore => ({

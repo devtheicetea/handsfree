@@ -32,6 +32,17 @@ describe("PermissionPolicy", () => {
     expect(await pending).toEqual({ behavior: "allow" });
   });
 
+  it("pendingRequests lists unresolved asks (with input) and clears on resolve", async () => {
+    const onAsk = vi.fn();
+    const p = new PermissionPolicy(safelist, onAsk);
+    void p.evaluate("Bash", { command: "ls" });
+    const pending = p.pendingRequests();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ tool: "Bash", input: { command: "ls" } });
+    p.resolve(pending[0]!.id, "allow");
+    expect(p.pendingRequests()).toHaveLength(0);
+  });
+
   it("deny resolves to a deny PermissionResult", async () => {
     const onAsk = vi.fn();
     const p = new PermissionPolicy(safelist, onAsk);
