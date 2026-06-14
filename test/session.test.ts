@@ -54,6 +54,24 @@ describe("Session (backend-agnostic shell)", () => {
     await session.stop();
   });
 
+  it("replays an in-flight (mid-stream) turn on reattach — backgrounding mid-stream loses nothing", async () => {
+    const backend = new FakeBackend();
+    backend.streamOnly = true;   // the turn streams but never finishes before reconnect
+    const session = new Session(backend);
+    await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: () => {} });
+    session.prompt("hello");
+    await tick();
+    // The app backgrounded mid-stream and reconnected — reattach must replay the
+    // partial-so-far, with the turn still marked in-flight (not done).
+    const replayed: BridgeToClient[] = [];
+    session.reattach((m) => replayed.push(m));
+    const text = replayed.filter((m) => m.type === "response").map((m) => (m as { text: string }).text).join("");
+    expect(text).toBe("echo:hello");
+    expect(replayed.some((m) => m.type === "response" && (m as { done: boolean }).done)).toBe(false);
+    expect(replayed.some((m) => m.type === "status" && (m as { state: string }).state === "thinking")).toBe(true);
+    await session.stop();
+  });
+
   it("detachEmit stops output reaching the old sink", async () => {
     const emitted: BridgeToClient[] = [];
     const session = new Session(new FakeBackend());
