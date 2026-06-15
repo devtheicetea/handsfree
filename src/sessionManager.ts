@@ -93,8 +93,11 @@ export class SessionManager {
       }
     }
     const sessionKey = randomUUID();
-    const policy = new PermissionPolicy(this.safelist, (req) =>
-      this.tagged(sessionKey, this.broadcast)(this.permissionRequestMsg(req)));
+    const policy = new PermissionPolicy(
+      this.safelist,
+      (req) => this.tagged(sessionKey, this.broadcast)(this.permissionRequestMsg(req)),
+      (id) => this.broadcast({ type: "permission_resolved", sessionKey, id }),
+    );
     const session = this.makeSession(agent, projectPath);
     this.sessions.set(sessionKey, { session, policy, projectPath, agent, resumeId });
     toOpener({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });

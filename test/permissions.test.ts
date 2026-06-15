@@ -79,4 +79,24 @@ describe("PermissionPolicy", () => {
     p.abortAll();
     expect((await pending).behavior).toBe("deny");
   });
+
+  it("notifies onResolved exactly once when a pending id is resolved, and not for unknown ids", () => {
+    const resolved: string[] = [];
+    const p = new PermissionPolicy([], () => {}, (id) => resolved.push(id));
+    void p.evaluate("Bash", {});                   // creates one pending (mode safelist, Bash not safelisted)
+    const id = p.pendingRequests()[0]!.id;
+    p.resolve(id, "allow");
+    p.resolve(id, "allow");                        // second is a no-op
+    p.resolve("nonexistent", "deny");
+    expect(resolved).toEqual([id]);
+  });
+
+  it("notifies onResolved for each pending id when aborted", () => {
+    const resolved: string[] = [];
+    const p = new PermissionPolicy([], () => {}, (id) => resolved.push(id));
+    void p.evaluate("Bash", {});
+    const id = p.pendingRequests()[0]!.id;
+    p.abortAll();
+    expect(resolved).toEqual([id]);
+  });
 });

@@ -235,6 +235,32 @@ describe("SessionManager", () => {
     expect(req.sessionKey).toBe(key);
   });
 
+  it("broadcasts permission_resolved when a permission is answered", async () => {
+    let backend: FakeBackend | null = null;
+    const broadcast: BridgeToClient[] = [];
+    const manager = new SessionManager({
+      safelist: [],
+      stores: { claude: emptyStore, codex: emptyStore },
+      makeSession: () => { backend = new FakeBackend(); return new Session(backend); },
+      broadcast: (m) => broadcast.push(m),
+    });
+    const key = await manager.open("/p", "claude", "new", "n", () => {});
+    // Trigger a permission request through the backend's evaluate hook (same pattern as the reattach test)
+    void backend!.startOpts!.evaluate("Bash", { command: "ls" });
+    await new Promise((r) => setTimeout(r, 10));
+    // Capture the id from the broadcast permission_request
+    const req = broadcast.find((m) => m.type === "permission_request") as any;
+    expect(req).toBeDefined();
+    const id: string = req.id;
+    // Resolve it via route — this should broadcast permission_resolved
+    manager.route({ type: "permission_response", sessionKey: key, id, decision: "allow" } as any, "A");
+    const resolved = broadcast.find((m) => m.type === "permission_resolved") as any;
+    expect(resolved).toBeDefined();
+    expect(resolved.sessionKey).toBe(key);
+    expect(resolved.id).toBe(id);
+    await manager.stopAll();
+  });
+
   it("resolves resume through the matching agent's store", async () => {
     const calls: string[] = [];
     const store = (tag: string): SessionStore => ({

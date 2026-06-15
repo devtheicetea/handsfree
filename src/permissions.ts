@@ -20,7 +20,8 @@ export class PermissionPolicy {
   private readonly granted = new Set<string>();
   private readonly pending = new Map<string, Pending>();
 
-  constructor(safelist: string[], private readonly onAsk: (req: AskRequest) => void) {
+  constructor(safelist: string[], private readonly onAsk: (req: AskRequest) => void,
+              private readonly onResolved: (id: string) => void = () => {}) {
     this.safelist = new Set(safelist);
   }
 
@@ -55,16 +56,14 @@ export class PermissionPolicy {
     const p = this.pending.get(id);
     if (!p) return;
     this.pending.delete(id);
-    if (decision === "deny") {
-      p.resolve({ behavior: "deny", message: "Denied by user" });
-      return;
-    }
+    this.onResolved(id);
+    if (decision === "deny") { p.resolve({ behavior: "deny", message: "Denied by user" }); return; }
     if (decision === "allow_session") this.granted.add(p.tool);
     p.resolve({ behavior: "allow" });
   }
 
   abortAll(): void {
-    for (const [, p] of this.pending) p.resolve({ behavior: "deny", message: "Aborted" });
+    for (const [id, p] of this.pending) { p.resolve({ behavior: "deny", message: "Aborted" }); this.onResolved(id); }
     this.pending.clear();
   }
 }
