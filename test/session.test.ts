@@ -182,4 +182,21 @@ describe("Session (backend-agnostic shell)", () => {
     expect(backend.prompts).toEqual(["first", "second"]);
     await session.stop();
   });
+
+  it("runs multiple queued prompts in FIFO order", async () => {
+    const backend = new FakeBackend();
+    backend.streamOnly = true;
+    const session = new Session(backend);
+    await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: () => {} });
+    session.prompt("first");
+    session.prompt("second");
+    session.prompt("third");
+    expect(backend.prompts).toEqual(["first"]);
+    backend.emitTurnDone();
+    await tick();
+    expect(backend.prompts).toEqual(["first", "second"]);
+    backend.emitTurnDone();
+    await tick();
+    expect(backend.prompts).toEqual(["first", "second", "third"]);
+  });
 });

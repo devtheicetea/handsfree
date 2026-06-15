@@ -34,7 +34,7 @@ export class Session {
     this.backend = backend;
   }
 
-  /** Single emit path: tracks status + buffers the in-flight turn for reattach. */
+  /** Single emit path: tracks status + buffers the in-flight turn for replay. */
   private send(msg: BridgeToClient): void {
     if (msg.type === "status") this.currentStatus = msg.state;
     if (msg.type === "response" && !msg.done && msg.text) this.turnBuffer.push(msg.text);
@@ -66,17 +66,13 @@ export class Session {
           } else if (ev.kind === "turn_done") {
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
             this.send({ type: "status", state: "idle" } as any);
-            this.busy = false;
-            const next = this.pendingPrompts.shift();
-            if (next) this.runPrompt(next.text, next.attachments);
+            this.dequeueNext();
           } else if (ev.kind === "turn_failed") {
             // The turn errored (auth/quota/etc.) but the session stays alive.
             this.send({ type: "error", code: "turn_failed", message: ev.message } as any);
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
             this.send({ type: "status", state: "idle" } as any);
-            this.busy = false;
-            const next = this.pendingPrompts.shift();
-            if (next) this.runPrompt(next.text, next.attachments);
+            this.dequeueNext();
           }
         }
       } catch (err) {
@@ -85,6 +81,8 @@ export class Session {
         this.send({ type: "error", code: "session_crashed", message: String(err) });
       } finally {
         this.active = false;
+        this.busy = false;
+        this.pendingPrompts = [];
       }
     })();
 
@@ -102,6 +100,15 @@ export class Session {
     this.turnBuffer = [];
     this.send({ type: "status", state: "thinking" } as any);
     this.backend.prompt(text, attachments);
+  }
+
+  private dequeueNext(): void {
+    this.busy = false;
+    const next = this.pendingPrompts.shift();
+    // runPrompt resets turnBuffer at the start of a new turn, so a late
+    // subscriber that calls replayTo will see the new (empty) buffer rather
+    // than the finished turn replayed as if it were in-flight.
+    if (next) this.runPrompt(next.text, next.attachments);
   }
 
   /** Current turn number (best-effort, for user_message ordering). */
