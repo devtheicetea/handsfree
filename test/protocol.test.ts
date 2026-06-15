@@ -62,6 +62,23 @@ describe("parseClientMessage", () => {
     const msg: BridgeToClient = { type: "response", sessionKey: "k1", turn: 1, text: "hello", done: false };
     expect(JSON.parse(JSON.stringify(msg))).toEqual(msg);
   });
+
+  it("accepts hello with a clientId", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "hello", token: "t", clientId: "abc" }));
+    expect(r.ok).toBe(true);
+    if (r.ok && r.value.type === "hello") expect(r.value.clientId).toBe("abc");
+  });
+
+  it("accepts hello without a clientId (backward compatible)", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "hello" }));
+    expect(r.ok).toBe(true);
+  });
+
+  it("parses an unsubscribe message", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "unsubscribe", sessionKey: "k1" }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.type).toBe("unsubscribe");
+  });
 });
 
 describe("agent field", () => {

@@ -6,7 +6,7 @@ import type { SessionMeta } from "./stores/types.js";
 export const agentSchema = z.enum(["claude", "codex"]).default("claude");
 
 // ---------- client -> bridge ----------
-export const helloSchema = z.object({ type: z.literal("hello"), token: z.string().optional() });
+export const helloSchema = z.object({ type: z.literal("hello"), token: z.string().optional(), clientId: z.string().optional() });
 export const listProjectsSchema = z.object({ type: z.literal("list_projects") });
 export const listSessionsSchema = z.object({ type: z.literal("list_sessions"), projectPath: z.string().min(1), agent: agentSchema });
 export const openSessionSchema = z.object({
@@ -37,6 +37,7 @@ export const viewSessionSchema = z.object({
   type: z.literal("view_session"), projectPath: z.string().min(1), agent: agentSchema, sessionId: z.string().min(1),
 });
 export const unviewSessionSchema = z.object({ type: z.literal("unview_session") });
+export const unsubscribeSchema = z.object({ type: z.literal("unsubscribe"), sessionKey: z.string().min(1) });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
@@ -49,6 +50,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   abortSchema,
   viewSessionSchema,
   unviewSessionSchema,
+  unsubscribeSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -75,6 +77,8 @@ export type BridgeToClient =
   | { type: "status"; sessionKey: string; state: "thinking" | "idle" | "error" }
   | { type: "response"; sessionKey: string; turn: number; text: string; done: boolean }
   | { type: "permission_request"; sessionKey: string; id: string; tool: string; input: unknown; detail: string }
+  | { type: "user_message"; sessionKey: string; turn: number; text: string; attachments?: { mime: string; dataBase64: string }[]; origin: string }
+  | { type: "permission_resolved"; sessionKey: string; id: string }
   | { type: "history"; sessionKey: string; items: HistoryItem[] }
   // v0.4.0 mirroring (no sessionKey — these address sessions by (agent, sessionId)):
   | { type: "session_history"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[] }
