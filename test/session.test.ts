@@ -39,6 +39,7 @@ describe("Session (backend-agnostic shell)", () => {
 
   it("buffers the in-flight turn and replays it on replayTo (no session_started — manager owns that)", async () => {
     const backend = new FakeBackend();
+    backend.streamOnly = true;   // keep turn in-flight
     const session = new Session(backend);
     await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: () => {} });
     session.prompt("hi");
@@ -135,14 +136,18 @@ describe("Session (backend-agnostic shell)", () => {
   });
 
   it("numbers turns and clears the buffer on the next prompt, not on done", async () => {
+    const backend = new FakeBackend();
+    backend.streamOnly = true;   // keep turn in-flight for first replay
     const emitted: BridgeToClient[] = [];
-    const session = new Session(new FakeBackend());
+    const session = new Session(backend);
     await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: (m) => emitted.push(m) });
     session.prompt("one");
     await tick();
     const replay: BridgeToClient[] = [];
-    session.replayTo((m) => replay.push(m)); // turn 1 finished but still replayable
+    session.replayTo((m) => replay.push(m)); // turn 1 in-flight — replayable
     expect(replay.some((m) => m.type === "response" && (m as { text: string }).text === "echo:one")).toBe(true);
+    backend.emitTurnDone();
+    await tick();
     session.prompt("two");
     await tick();
     const last = emitted.filter((m) => m.type === "response" && (m as { text: string }).text).pop();
@@ -198,5 +203,22 @@ describe("Session (backend-agnostic shell)", () => {
     backend.emitTurnDone();
     await tick();
     expect(backend.prompts).toEqual(["first", "second", "third"]);
+  });
+
+  it("replayTo on an idle session emits only status, not the finished turn's text", async () => {
+    const backend = new FakeBackend();
+    const out: BridgeToClient[] = [];
+    const s = new Session(backend);
+    const policy = new PermissionPolicy(["Read"], () => {});
+    await s.start({ projectPath: "/p", resume: undefined, policy, emit: (m) => out.push(m) });
+    s.prompt("hi");
+    backend.emitTextDelta("answer");
+    await tick();
+    backend.emitTurnDone();
+    await tick();
+    const caught: BridgeToClient[] = [];
+    s.replayTo((m) => caught.push(m));
+    expect(caught.some((m) => m.type === "response")).toBe(false);
+    expect(caught.some((m) => m.type === "status" && (m as any).state === "idle")).toBe(true);
   });
 });

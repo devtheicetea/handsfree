@@ -138,7 +138,9 @@ export class Session {
    *  just subscribed). Does NOT change the live emit — the session keeps
    *  broadcasting to all subscribers via its original emit. */
   replayTo(emit: (msg: BridgeToClient) => void): void {
-    for (const text of this.turnBuffer) emit({ type: "response", turn: this.turnNo, text, done: false } as any);
+    if (this.currentStatus === "thinking") {
+      for (const text of this.turnBuffer) emit({ type: "response", turn: this.turnNo, text, done: false } as any);
+    }
     emit({ type: "status", state: this.currentStatus } as any);
   }
 
