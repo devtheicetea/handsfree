@@ -130,6 +130,7 @@ export class BridgeServer {
 
   private onConnection(ws: WebSocket): void {
     let helloDone = false;
+    let clientId = "";
 
     ws.on("message", async (data) => {
       const parsed = parseClientMessage(data.toString());
@@ -148,14 +149,14 @@ export class BridgeServer {
           ws.send(encode({ type: "error", code: "unauthorized", message: "bad token" }), () => ws.close());
           return;
         }
-        const clientId = msg.clientId ?? randomUUID();
+        clientId = msg.clientId ?? randomUUID();
         const prior = this.clients.register(clientId, ws);
         if (prior && prior.readyState === WebSocket.OPEN) {
           prior.send(encode({ type: "error", code: "superseded", message: "Reconnected" }), () => prior.close());
         }
-        helloDone = true;
         const codex = await this.detectCodex();
         this.send(ws, { type: "hello_ok", version: VERSION, agents: { claude: true, codex } });
+        helloDone = true;
         if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
         this.logger?.info("hello", { clientId });
         // Catch this client up on every live session AND subscribe it to them.
@@ -165,7 +166,7 @@ export class BridgeServer {
       }
 
       try {
-        await this.route(ws, msg);
+        await this.route(ws, msg, clientId);
       } catch (err) {
         this.send(ws, { type: "error", code: "internal", message: String(err) });
       }
@@ -183,7 +184,7 @@ export class BridgeServer {
     });
   }
 
-  private async route(ws: WebSocket, msg: ClientMessage): Promise<void> {
+  private async route(ws: WebSocket, msg: ClientMessage, clientId: string): Promise<void> {
     switch (msg.type) {
       case "list_projects":
         this.send(ws, { type: "projects", projects: mergeProjects(this.stores.claude.listProjects(), this.stores.codex.listProjects()) });
@@ -223,8 +224,7 @@ export class BridgeServer {
         if (msg.type === "prompt") {
           this.logger?.info("prompt", { sessionKey: msg.sessionKey, textLen: msg.text.length, attachments: msg.attachments?.length ?? 0 });
         }
-        const origin = this.clients.bySocket(ws)?.clientId;
-        const ok = this.sessions.route(msg, origin);
+        const ok = this.sessions.route(msg, clientId);
         if (!ok) this.send(ws, { type: "error", sessionKey: msg.sessionKey, code: "no_session", message: "session not found — reopen it" });
         return;
       }

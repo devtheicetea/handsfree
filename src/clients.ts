@@ -29,7 +29,9 @@ export class ClientRegistry {
   }
 
   remove(socket: WebSocket): void {
-    for (const [id, c] of this.byId) if (c.socket === socket) this.byId.delete(id);
+    for (const [id, c] of this.byId) {
+      if (c.socket === socket) { this.byId.delete(id); break; }
+    }
   }
 
   get(clientId: string): RegisteredClient | undefined {
