@@ -13,6 +13,16 @@ export class FakeBackend implements AgentBackend {
   /** When true, prompt() emits a delta but NO turn_done — an in-flight, mid-stream turn. */
   streamOnly = false;
 
+  /** Manually push a text_delta event (for tests that need fine-grained turn control). */
+  emitTextDelta(text: string): void {
+    this.events.push({ kind: "text_delta", text });
+  }
+
+  /** Manually push a turn_done event (for tests that need fine-grained turn control). */
+  emitTurnDone(): void {
+    this.events.push({ kind: "turn_done" });
+  }
+
   async *start(opts: BackendStartOpts): AsyncGenerator<AgentEvent, void> {
     this.startOpts = opts;
     if (this.crash) throw this.crash;

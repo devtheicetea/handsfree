@@ -27,6 +27,8 @@ export class Session {
   private currentStatus: "thinking" | "idle" | "error" = "idle";
   private turnBuffer: string[] = [];
   private turnNo = 0;
+  private busy = false;
+  private pendingPrompts: { text: string; attachments?: ImageAttachment[] }[] = [];
 
   constructor(backend: AgentBackend) {
     this.backend = backend;
@@ -64,11 +66,17 @@ export class Session {
           } else if (ev.kind === "turn_done") {
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
             this.send({ type: "status", state: "idle" } as any);
+            this.busy = false;
+            const next = this.pendingPrompts.shift();
+            if (next) this.runPrompt(next.text, next.attachments);
           } else if (ev.kind === "turn_failed") {
             // The turn errored (auth/quota/etc.) but the session stays alive.
             this.send({ type: "error", code: "turn_failed", message: ev.message } as any);
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
             this.send({ type: "status", state: "idle" } as any);
+            this.busy = false;
+            const next = this.pendingPrompts.shift();
+            if (next) this.runPrompt(next.text, next.attachments);
           }
         }
       } catch (err) {
@@ -84,11 +92,20 @@ export class Session {
 
   prompt(text: string, attachments?: ImageAttachment[]): void {
     if (!this.emit) throw new Error("session not started");
+    if (this.busy) { this.pendingPrompts.push({ text, attachments }); return; }
+    this.runPrompt(text, attachments);
+  }
+
+  private runPrompt(text: string, attachments?: ImageAttachment[]): void {
+    this.busy = true;
     this.turnNo += 1;
     this.turnBuffer = [];
     this.send({ type: "status", state: "thinking" } as any);
     this.backend.prompt(text, attachments);
   }
+
+  /** Current turn number (best-effort, for user_message ordering). */
+  get currentTurn(): number { return this.turnNo; }
 
   /** True while the backend event loop is alive (between start() and stop()/crash). */
   isActive(): boolean {
@@ -110,17 +127,10 @@ export class Session {
     this.emit = () => {};
   }
 
-  /** Rebind the emit sink to a reconnected client and replay current state.
-   *
-   * NOTE: do NOT emit session_started here. The SessionManager is the sole
-   * owner of session_started: it emits it on open (new session) and on
-   * reattach-by-resumeId (returning client). On a reconnect, the app
-   * re-opens its visible session to re-bind; background sessions keep
-   * routing by their sessionKey-tagged response/status messages — so
-   * reattach must not emit session_started.
-   */
-  reattach(emit: (msg: BridgeToClient) => void): void {
-    this.emit = emit;
+  /** Replay the in-flight turn + current status to a one-off sink (a client that
+   *  just subscribed). Does NOT change the live emit — the session keeps
+   *  broadcasting to all subscribers via its original emit. */
+  replayTo(emit: (msg: BridgeToClient) => void): void {
     for (const text of this.turnBuffer) emit({ type: "response", turn: this.turnNo, text, done: false } as any);
     emit({ type: "status", state: this.currentStatus } as any);
   }

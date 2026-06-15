@@ -37,15 +37,15 @@ describe("Session (backend-agnostic shell)", () => {
     await session.stop();
   });
 
-  it("buffers the in-flight turn and replays it on reattach (no session_started — manager owns that)", async () => {
+  it("buffers the in-flight turn and replays it on replayTo (no session_started — manager owns that)", async () => {
     const backend = new FakeBackend();
     const session = new Session(backend);
     await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: () => {} });
     session.prompt("hi");
     await tick();
     const replayed: BridgeToClient[] = [];
-    session.reattach((m) => replayed.push(m));
-    // session_started must NOT be emitted by reattach — the SessionManager owns it
+    session.replayTo((m) => replayed.push(m));
+    // session_started must NOT be emitted by replayTo — the SessionManager owns it
     expect(replayed.find((m) => m.type === "session_started")).toBeUndefined();
     const text = replayed.filter((m) => m.type === "response").map((m) => (m as { text: string }).text).join("");
     expect(text).toBe("echo:hi");
@@ -54,17 +54,17 @@ describe("Session (backend-agnostic shell)", () => {
     await session.stop();
   });
 
-  it("replays an in-flight (mid-stream) turn on reattach — backgrounding mid-stream loses nothing", async () => {
+  it("replays an in-flight (mid-stream) turn on replayTo — backgrounding mid-stream loses nothing", async () => {
     const backend = new FakeBackend();
     backend.streamOnly = true;   // the turn streams but never finishes before reconnect
     const session = new Session(backend);
     await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: () => {} });
     session.prompt("hello");
     await tick();
-    // The app backgrounded mid-stream and reconnected — reattach must replay the
+    // The app backgrounded mid-stream and reconnected — replayTo must replay the
     // partial-so-far, with the turn still marked in-flight (not done).
     const replayed: BridgeToClient[] = [];
-    session.reattach((m) => replayed.push(m));
+    session.replayTo((m) => replayed.push(m));
     const text = replayed.filter((m) => m.type === "response").map((m) => (m as { text: string }).text).join("");
     expect(text).toBe("echo:hello");
     expect(replayed.some((m) => m.type === "response" && (m as { done: boolean }).done)).toBe(false);
@@ -141,12 +141,45 @@ describe("Session (backend-agnostic shell)", () => {
     session.prompt("one");
     await tick();
     const replay: BridgeToClient[] = [];
-    session.reattach((m) => replay.push(m)); // turn 1 finished but still replayable
+    session.replayTo((m) => replay.push(m)); // turn 1 finished but still replayable
     expect(replay.some((m) => m.type === "response" && (m as { text: string }).text === "echo:one")).toBe(true);
     session.prompt("two");
     await tick();
-    const last = replay.filter((m) => m.type === "response" && (m as { text: string }).text).pop();
+    const last = emitted.filter((m) => m.type === "response" && (m as { text: string }).text).pop();
     expect((last as { turn: number }).turn).toBe(2);
+    await session.stop();
+  });
+
+  it("replayTo replays the in-flight turn + status to a one-off sink without rebinding live emit", async () => {
+    const backend = new FakeBackend();
+    backend.streamOnly = true; // keep turn in-flight until we call emitTextDelta/emitTurnDone manually
+    const out: BridgeToClient[] = [];
+    const session = new Session(backend);
+    await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: (m) => out.push(m) });
+    session.prompt("hi");
+    backend.emitTextDelta("partial");
+    await tick();
+    const caught: BridgeToClient[] = [];
+    session.replayTo((m) => caught.push(m));
+    expect(caught.some((m) => m.type === "response" && (m as any).text === "partial")).toBe(true);
+    expect(caught.some((m) => m.type === "status" && (m as any).state === "thinking")).toBe(true);
+    backend.emitTextDelta("more");
+    await tick();
+    expect(out.some((m) => m.type === "response" && (m as any).text === "more")).toBe(true);
+    await session.stop();
+  });
+
+  it("queues a second prompt while a turn is in flight and runs it after turn_done", async () => {
+    const backend = new FakeBackend();
+    backend.streamOnly = true; // keep turns in-flight; we control turn_done manually
+    const session = new Session(backend);
+    await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: () => {} });
+    session.prompt("first");
+    session.prompt("second"); // should NOT reach the backend yet
+    expect(backend.prompts).toEqual(["first"]);
+    backend.emitTurnDone();
+    await tick();
+    expect(backend.prompts).toEqual(["first", "second"]);
     await session.stop();
   });
 });
