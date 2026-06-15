@@ -63,7 +63,8 @@ export class PermissionPolicy {
   }
 
   abortAll(): void {
-    for (const [id, p] of this.pending) { p.resolve({ behavior: "deny", message: "Aborted" }); this.onResolved(id); }
+    const snapshot = [...this.pending];
     this.pending.clear();
+    for (const [id, p] of snapshot) { p.resolve({ behavior: "deny", message: "Aborted" }); this.onResolved(id); }
   }
 }
