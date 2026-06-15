@@ -77,9 +77,13 @@ export class SessionManager {
     // Reattach a still-live session ONLY when the resumed id matches exactly
     // (reconnect path). Never match by (project, agent) — that would grab an
     // arbitrary session when several are live for the same folder/agent.
+    // Match the live backend id too, not just resumeId: a session opened fresh
+    // has resumeId === null and only acquires a backendSessionId once the agent
+    // starts, so another client resuming that id must join via backendSessionId
+    // (mirrors ownsSession) — otherwise it spawns a separate, divergent session.
     if (resumeId) {
       for (const [key, ls] of this.sessions) {
-        if (ls.resumeId === resumeId && ls.session.isActive()) {
+        if (ls.agent === agent && (ls.resumeId === resumeId || ls.session.backendSessionId === resumeId) && ls.session.isActive()) {
           toOpener({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId, mode: ls.policy.getMode() });
           // The client may have restarted and lost all local state (it seeds
           // history only into an empty conversation), so re-send the snapshot —
@@ -121,6 +125,30 @@ export class SessionManager {
 
   liveSessionKeys(): string[] {
     return [...this.sessions].filter(([, ls]) => ls.session.isActive()).map(([k]) => k);
+  }
+
+  /** The live sessionKey whose backend IS this on-disk (agent, sessionId), if any.
+   *  Mirrors ownsSession's matching so a viewer of a live session can attach to it. */
+  liveKeyFor(agent: AgentName, sessionId: string): string | undefined {
+    for (const [key, ls] of this.sessions) {
+      if (ls.agent !== agent || !ls.session.isActive()) continue;
+      if (ls.resumeId === sessionId || ls.session.backendSessionId === sessionId) return key;
+    }
+    return undefined;
+  }
+
+  /** Attach a (re)viewing client to an already-live session instead of giving it a
+   *  read-only mirror: announce the live sessionKey (session_started{nonce}) so the
+   *  client leaves its optimistic mirror, seed history into that key, then replay
+   *  the in-flight turn + pending permissions. Returns false if the key went away. */
+  attachExisting(key: string, nonce: string, projectPath: string, sessionId: string, toClient: (m: BridgeToClient) => void): boolean {
+    const ls = this.sessions.get(key);
+    if (!ls || !ls.session.isActive()) return false;
+    toClient({ type: "session_started", nonce, sessionKey: key, projectPath, agent: ls.agent, resumeId: sessionId, mode: ls.policy.getMode() });
+    this.tagged(key, toClient)({ type: "history", items: this.stores[ls.agent].history(projectPath, sessionId, HISTORY_LIMIT) } as BridgeToClient);
+    ls.session.replayTo(this.tagged(key, toClient));
+    this.replayPending(key, ls, toClient);
+    return true;
   }
 
   /** Route a session-scoped client message to its session/policy by sessionKey. */

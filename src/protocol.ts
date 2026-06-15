@@ -35,6 +35,10 @@ export const abortSchema = z.object({ type: z.literal("abort"), sessionKey: z.st
 // v0.4.0 mirroring: view = history snapshot + live watch (no bridge session).
 export const viewSessionSchema = z.object({
   type: z.literal("view_session"), projectPath: z.string().min(1), agent: agentSchema, sessionId: z.string().min(1),
+  // When the viewed session is actually a LIVE bridge-owned session, the bridge
+  // attaches the client to it (live streaming) and echoes this nonce back in
+  // session_started so the client can switch from its optimistic mirror.
+  nonce: z.string().optional(),
 });
 export const unviewSessionSchema = z.object({ type: z.literal("unview_session") });
 export const unsubscribeSchema = z.object({ type: z.literal("unsubscribe"), sessionKey: z.string().min(1) });

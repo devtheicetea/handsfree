@@ -206,6 +206,15 @@ export class BridgeServer {
         return;
       }
       case "view_session": {
+        // If this on-disk session is actually LIVE and bridge-owned, attach the
+        // client to it (live streaming + answerable permissions) rather than
+        // handing back a read-only mirror it can't update or answer from.
+        const liveKey = this.sessions.liveKeyFor(msg.agent, msg.sessionId);
+        if (liveKey) {
+          this.clients.subscribe(ws, liveKey);
+          this.sessions.attachExisting(liveKey, msg.nonce ?? "", msg.projectPath, msg.sessionId, (m) => this.send(ws, m));
+          return;
+        }
         this.clients.subscribeMirror(ws, `${msg.agent}:${msg.sessionId}`);
         const items = this.stores[msg.agent].history(msg.projectPath, msg.sessionId, HISTORY_LIMIT);
         this.send(ws, { type: "session_history", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items });

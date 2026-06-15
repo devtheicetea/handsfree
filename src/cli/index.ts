@@ -24,8 +24,11 @@ const conn = connect({
       return;
     }
     // The bridge fans out ALL live sessions to every client; follow only ours.
+    // Errors are the exception: a no_session/bad_message/internal error is tagged
+    // with a stale or foreign sessionKey (e.g. a prompt to a key that died on
+    // restart), so filtering by key would silently swallow it — always show them.
     const key = (m as { sessionKey?: string }).sessionKey;
-    if (key && key !== sessionKey) return;
+    if (m.type !== "error" && key && key !== sessionKey) return;
     if (m.type === "history") {
       for (const it of (m as { items: { role?: string; text?: string }[] }).items) process.stdout.write(formatHistory(it));
       return;

@@ -419,4 +419,28 @@ describe("SessionManager broadcast API", () => {
     const keys = mgr.reattachAllTo((m) => replayed.push(m));
     expect(keys.sort()).toEqual([k1, k2].sort());
   });
+
+  it("liveKeyFor finds a live session by its on-disk id, and attachExisting wires a viewer to it", async () => {
+    const mgr = new SessionManager({
+      safelist: [],
+      stores: storesFake(),
+      makeSession: () => new FakeSession() as any,
+      broadcast: () => {},
+    });
+    const key = await mgr.open("/p", "claude", "sid1", "n1", () => {});
+    expect(mgr.liveKeyFor("claude", "sid1")).toBe(key);
+    expect(mgr.liveKeyFor("claude", "nope")).toBeUndefined();
+    expect(mgr.liveKeyFor("codex", "sid1")).toBeUndefined();
+
+    const out: BridgeToClient[] = [];
+    const ok = mgr.attachExisting(key, "viewNonce", "/p", "sid1", (m) => out.push(m));
+    expect(ok).toBe(true);
+    const started = out.find((x) => x.type === "session_started") as any;
+    expect(started?.nonce).toBe("viewNonce");
+    expect(started?.sessionKey).toBe(key);
+    expect(started?.resumeId).toBe("sid1");
+    // history + replayed status are tagged with the live key so the client binds them there
+    expect(out.some((x) => x.type === "history" && (x as any).sessionKey === key)).toBe(true);
+    expect(out.some((x) => x.type === "status" && (x as any).sessionKey === key)).toBe(true);
+  });
 });
