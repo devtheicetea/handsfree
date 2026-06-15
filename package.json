@@ -8,7 +8,8 @@
     "node": ">=20"
   },
   "bin": {
-    "handsfree-bridge": "dist/index.js"
+    "handsfree-bridge": "dist/index.js",
+    "handsfree": "dist/cli/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
