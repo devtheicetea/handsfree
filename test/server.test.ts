@@ -423,12 +423,11 @@ describe("BridgeServer", () => {
     const act = await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 7);
     expect((act as any).preview).toMatchObject({ text: "from laptop" });
 
-    // a different (unwatched) session -> session_activity only (no external_turns since not mirrored)
+    // a different (unwatched) session -> session_activity to ALL clients (list freshness), but no external_turns
     watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_2", items: [item], lastActive: 8, owned: false });
-    // session_activity for thr_2 is NOT delivered because the client only mirrors thr_1
-    // (single-slot mirror). external_turns for thr_2 also not delivered.
-    await new Promise((r) => setTimeout(r, 30));
-    expect(msgs.some((m) => m.type === "session_activity" && (m as any).sessionId === "thr_2")).toBe(false);
+    // session_activity for thr_2 IS delivered to all connected clients (list freshness).
+    // external_turns for thr_2 is NOT delivered since the client only mirrors thr_1.
+    await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).sessionId === "thr_2");
     expect(msgs.some((m) => m.type === "external_turns" && (m as any).sessionId === "thr_2")).toBe(false);
 
     // owned (bridge-authored) -> no external_turns echo even when watched
@@ -436,13 +435,13 @@ describe("BridgeServer", () => {
     await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 9);
     expect(msgs.filter((m) => m.type === "external_turns")).toHaveLength(1);
 
-    // unview clears the watch -> no more mirror events
+    // unview clears the watch -> no more external_turns mirror events, but session_activity still fans out
     ws.send(JSON.stringify({ type: "unview_session" }));
     await new Promise((r) => setTimeout(r, 30));
     watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_1", items: [item], lastActive: 10, owned: false });
-    await new Promise((r) => setTimeout(r, 30));
-    // After unview, no session_activity for lastActive=10 either (not in mirror anymore)
-    expect(msgs.some((m) => m.type === "session_activity" && (m as any).lastActive === 10)).toBe(false);
+    // session_activity for lastActive=10 IS still delivered (list freshness, all clients)
+    await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 10);
+    // external_turns still only the one from the initial watched event (unview stopped mirror delivery)
     expect(msgs.filter((m) => m.type === "external_turns")).toHaveLength(1);
 
     ws.close();

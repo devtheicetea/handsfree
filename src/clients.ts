@@ -71,5 +71,9 @@ export class ClientRegistry {
     return out;
   }
 
+  all(): WebSocket[] {
+    return [...this.byId.values()].map((c) => c.socket);
+  }
+
   hasAny(): boolean { return this.byId.size > 0; }
 }

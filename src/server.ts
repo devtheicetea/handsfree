@@ -75,7 +75,7 @@ export class BridgeServer {
       this.broadcastToMirror(mirrorId, { type: "external_turns", projectPath: e.projectPath, agent: e.agent, sessionId: e.sessionId, items: e.items });
     }
     const preview = e.items.length ? e.items[e.items.length - 1]! : null;
-    this.broadcastToMirror(mirrorId, { type: "session_activity", projectPath: e.projectPath, agent: e.agent, sessionId: e.sessionId, lastActive: e.lastActive, preview });
+    this.broadcastToAll({ type: "session_activity", projectPath: e.projectPath, agent: e.agent, sessionId: e.sessionId, lastActive: e.lastActive, preview });
   }
 
   listen(): Promise<number> {
@@ -102,6 +102,10 @@ export class BridgeServer {
 
   private broadcastToMirror(mirrorId: string, msg: BridgeToClient): void {
     for (const ws of this.clients.socketsForMirror(mirrorId)) this.send(ws, msg);
+  }
+
+  private broadcastToAll(msg: BridgeToClient): void {
+    for (const ws of this.clients.all()) this.send(ws, msg);
   }
 
   /**

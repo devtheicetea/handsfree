@@ -43,6 +43,13 @@ describe("ClientRegistry", () => {
     expect(r.socketsForMirror("claude:sess2")).toEqual([]);
   });
 
+  it("all() returns every registered client's socket", () => {
+    const r = new ClientRegistry();
+    const s1 = sock(), s2 = sock();
+    r.register("a", s1); r.register("b", s2);
+    expect(new Set(r.all())).toEqual(new Set([s1, s2]));
+  });
+
   it("remove drops the client and all its subscriptions", () => {
     const r = new ClientRegistry();
     const s1 = sock();
