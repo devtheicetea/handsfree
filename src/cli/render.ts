@@ -1,37 +1,43 @@
 import type { BridgeToClient } from "../protocol.js";
 
-export interface RenderAction {
-  write?: string;             // text to write to stdout
-  reprompt?: boolean;         // turn finished — show the input prompt again
-  permissionPrompt?: string;  // a permission line to show + await a keypress
-  permissionId?: string;      // the id to answer
-  clearPermission?: string;   // a permission resolved elsewhere — stop awaiting it
-}
+/**
+ * Pure mapping from a bridge event to a semantic UI action. No ANSI, no I/O —
+ * the repl interprets these against the terminal (spinner, prompt, styling), so
+ * this stays trivially testable. `me` is this client's id, used to skip the echo
+ * of our own user_message.
+ */
+export type RenderAction =
+  | { kind: "none" }
+  | { kind: "stream"; text: string }                                   // an agent reply token
+  | { kind: "turnEnd" }                                                // the agent finished its turn
+  | { kind: "status"; state: "thinking" | "idle" | "error" }
+  | { kind: "message"; role: "user" | "system"; text: string; from?: string }
+  | { kind: "permission"; id: string; tool: string; detail: string }
+  | { kind: "permissionResolved"; id: string }
+  | { kind: "error"; code: string; message: string };
 
-/** Pure mapping from an inbound bridge event to a terminal action. `me` is this
- *  client's clientId (to ignore our own user_message echo). */
 export function renderEvent(msg: BridgeToClient, me: string): RenderAction {
   switch (msg.type) {
     case "response":
-      if (msg.done) return { write: "\n", reprompt: true };
-      return msg.text ? { write: msg.text } : {};
+      if (msg.done) return { kind: "turnEnd" };
+      return msg.text ? { kind: "stream", text: msg.text } : { kind: "none" };
     case "user_message":
-      if (msg.origin === me) return {};
-      return { write: `\n[${msg.origin}] ${msg.text}\n` };
+      if (msg.origin === me) return { kind: "none" };          // our own prompt — already shown locally
+      return { kind: "message", role: "user", text: msg.text, from: msg.origin };
     case "permission_request":
-      return { permissionPrompt: `\n⚠ ${msg.detail}  [a]llow / [s]ession / [d]eny: `, permissionId: msg.id };
+      return { kind: "permission", id: msg.id, tool: msg.tool, detail: msg.detail };
     case "permission_resolved":
-      return { write: "\n(answered on another device)\n", clearPermission: msg.id };
+      return { kind: "permissionResolved", id: msg.id };
     case "status":
-      return msg.state === "thinking" ? { write: "" } : {};
+      return { kind: "status", state: msg.state };
     case "error":
-      return { write: `\n[error:${msg.code}] ${msg.message}\n`, reprompt: true };
+      return { kind: "error", code: msg.code, message: msg.message };
     default:
-      return {};
+      return { kind: "none" };
   }
 }
 
-/** Map a single keypress to a decision, or null to ignore. */
+/** Map a single keypress to a permission decision, or null to ignore. */
 export function keyToDecision(key: string): "allow" | "allow_session" | "deny" | null {
   const k = key.toLowerCase();
   if (k === "a") return "allow";

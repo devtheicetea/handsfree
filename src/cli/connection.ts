@@ -27,12 +27,14 @@ export interface Connection {
 export function connect(opts: {
   host: string; port: number; token: string | undefined; clientId: string;
   onEvent: (m: BridgeToClient) => void; onHelloOk: () => void; onClose: () => void;
+  onStatus?: (s: "connecting" | "connected" | "reconnecting") => void;
 }): Connection {
   let ws: WebSocket | null = null;
   let closed = false;
   let attempt = 0;
 
   const open = () => {
+    opts.onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
     ws = new WebSocket(`ws://${opts.host}:${opts.port}`);
     ws.on("open", () => {
       attempt = 0;
@@ -46,8 +48,8 @@ export function connect(opts: {
     });
     ws.on("close", () => {
       if (closed) return;
+      opts.onStatus?.("reconnecting");
       const delay = Math.min(15000, 2 ** Math.min(attempt++, 4) * 500);
-      process.stderr.write(`\nDisconnected — retrying in ${Math.round(delay / 1000)}s. Is the bridge running? (npm start)\n`);
       setTimeout(open, delay);
     });
     ws.on("error", () => { /* close handler drives reconnect */ });
