@@ -25,6 +25,7 @@ export interface SessionManagerDeps {
   stores?: { claude: SessionStore; codex: SessionStore };
   codexPath?: string | null;
   model?: string | null;
+  broadcast: (m: BridgeToClient) => void;   // server fan-out by m.sessionKey
 }
 
 /**
@@ -37,6 +38,7 @@ export class SessionManager {
   private readonly safelist: string[];
   private readonly makeSession: (agent: AgentName, projectPath: string) => Session;
   private readonly stores: { claude: SessionStore; codex: SessionStore };
+  private readonly broadcast: (m: BridgeToClient) => void;
 
   constructor(deps: SessionManagerDeps) {
     this.safelist = deps.safelist;
@@ -47,6 +49,7 @@ export class SessionManager {
         ? new Session(new ClaudeBackend({ model }))
         : new Session(new CodexBackend({ codexPath })));
     this.stores = deps.stores ?? { claude: new ClaudeStore(), codex: new CodexStore() };
+    this.broadcast = deps.broadcast;
   }
 
   /** Wrap a session's emit so every message is tagged with its sessionKey. */
@@ -69,7 +72,7 @@ export class SessionManager {
     }
   }
 
-  async open(projectPath: string, agent: AgentName, resume: string, nonce: string, emit: (m: BridgeToClient) => void): Promise<void> {
+  async open(projectPath: string, agent: AgentName, resume: string, nonce: string, toOpener: (m: BridgeToClient) => void): Promise<string> {
     const resumeId = this.stores[agent].resolveResume(projectPath, resume) ?? null;
     // Reattach a still-live session ONLY when the resumed id matches exactly
     // (reconnect path). Never match by (project, agent) — that would grab an
@@ -77,45 +80,56 @@ export class SessionManager {
     if (resumeId) {
       for (const [key, ls] of this.sessions) {
         if (ls.resumeId === resumeId && ls.session.isActive()) {
-          emit({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId, mode: ls.policy.getMode() });
+          toOpener({ type: "session_started", nonce, sessionKey: key, projectPath, agent, resumeId, mode: ls.policy.getMode() });
           // The client may have restarted and lost all local state (it seeds
           // history only into an empty conversation), so re-send the snapshot —
-          // and do it BEFORE reattach's buffer replay, or the replayed turn
+          // and do it BEFORE replayTo's buffer replay, or the replayed turn
           // would make the conversation non-empty and the seed would be skipped.
-          this.tagged(key, emit)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
-          ls.session.reattach(this.tagged(key, emit));
-          this.replayPending(key, ls, emit);   // re-surface a permission prompt the client missed
-          return;
+          this.tagged(key, toOpener)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
+          ls.session.replayTo(this.tagged(key, toOpener));
+          this.replayPending(key, ls, toOpener);
+          return key;
         }
       }
     }
     const sessionKey = randomUUID();
     const policy = new PermissionPolicy(this.safelist, (req) =>
-      this.tagged(sessionKey, emit)(this.permissionRequestMsg(req)));
+      this.tagged(sessionKey, this.broadcast)(this.permissionRequestMsg(req)));
     const session = this.makeSession(agent, projectPath);
     this.sessions.set(sessionKey, { session, policy, projectPath, agent, resumeId });
-    emit({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
-    // History snapshot (the app seeds an empty conversation with this); tagged by this session's key.
-    this.tagged(sessionKey, emit)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
-    await session.start({ projectPath, resume: resumeId ?? undefined, policy, emit: this.tagged(sessionKey, emit) });
+    toOpener({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
+    this.tagged(sessionKey, toOpener)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
+    await session.start({ projectPath, resume: resumeId ?? undefined, policy, emit: this.tagged(sessionKey, this.broadcast) });
+    return sessionKey;
   }
 
   /** Replay every live session's current state to a (re)connected client. */
-  reattachAll(emit: (m: BridgeToClient) => void): void {
+  reattachAllTo(emit: (m: BridgeToClient) => void): string[] {
+    const keys: string[] = [];
     for (const [key, ls] of this.sessions) {
       if (ls.session.isActive()) {
-        ls.session.reattach(this.tagged(key, emit));
-        this.replayPending(key, ls, emit);   // re-surface any missed permission prompt
+        ls.session.replayTo(this.tagged(key, emit));
+        this.replayPending(key, ls, emit);
+        keys.push(key);
       }
     }
+    return keys;
+  }
+
+  liveSessionKeys(): string[] {
+    return [...this.sessions].filter(([, ls]) => ls.session.isActive()).map(([k]) => k);
   }
 
   /** Route a session-scoped client message to its session/policy by sessionKey. */
-  route(msg: Extract<ClientMessage, { sessionKey: string }>): boolean {
+  route(msg: Extract<ClientMessage, { sessionKey: string }>, origin?: string): boolean {
     const ls = this.sessions.get(msg.sessionKey);
     if (!ls) return false;
     switch (msg.type) {
-      case "prompt": ls.session.prompt(msg.text, msg.attachments); return true;
+      case "prompt":
+        this.broadcast({ type: "user_message", sessionKey: msg.sessionKey, turn: ls.session.currentTurn + 1,
+                         text: msg.text, attachments: msg.attachments, origin: origin ?? "" });
+        ls.session.prompt(msg.text, msg.attachments);
+        return true;
       case "abort": ls.session.abortTurn(); ls.policy.abortAll(); return true;
       case "set_mode": ls.policy.setMode(msg.mode); return true;
       case "permission_response": ls.policy.resolve(msg.id, msg.decision); return true;

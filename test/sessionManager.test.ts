@@ -14,6 +14,17 @@ const emptyStore: SessionStore = { listProjects: () => [], listSessions: () => [
 
 const fakeStore = () => ({ listProjects: () => [], listSessions: () => [], resolveResume: () => undefined, history: () => [] });
 
+/** storesFake: resolveResume returns the resume arg unless "new" → undefined */
+function storesFake(): { claude: SessionStore; codex: SessionStore } {
+  const s: SessionStore = {
+    listProjects: () => [],
+    listSessions: () => [],
+    resolveResume: (_p: string, r: string) => (r === "new" ? undefined : r),
+    history: () => [],
+  };
+  return { claude: s, codex: s };
+}
+
 class FakeSession {
   started: StartParams | null = null;
   emit: ((m: BridgeToClient) => void) | null = null;
@@ -28,23 +39,26 @@ class FakeSession {
   isActive() { return this.active; }
   get project() { return this.started?.projectPath ?? ""; }
   detachEmit() { this.detached = true; this.emit = null; }
-  reattach(emit: (m: BridgeToClient) => void) { this.emit = emit; }
+  replayTo(emit: (m: BridgeToClient) => void) { emit({ type: "status", state: "idle" } as any); }
+  get currentTurn(): number { return 0; }
 }
 
 function mgr() {
   const made: FakeSession[] = [];
+  const broadcast: BridgeToClient[] = [];
   const m = new SessionManager({
     safelist: [],
     stores: { claude: emptyStore, codex: emptyStore },
     makeSession: () => { const s = new FakeSession(); made.push(s); return s as any; },
+    broadcast: (msg) => broadcast.push(msg),
   });
-  return { m, made };
+  return { m, made, broadcast };
 }
 
 describe("SessionManager", () => {
   it("tags each session's output with its sessionKey", async () => {
     const out: BridgeToClient[] = [];
-    const { m } = mgr();
+    const { m, broadcast } = mgr();
     await m.open("/a", "claude", "new", "n1", (x) => out.push(x));
     await m.open("/b", "claude", "new", "n2", (x) => out.push(x));
     const started = out.filter((m) => m.type === "session_started") as Array<{ sessionKey: string; nonce: string }>;
@@ -53,8 +67,9 @@ describe("SessionManager", () => {
     const keyB = started.find((s) => s.nonce === "n2")!.sessionKey;
     m.route({ type: "prompt", sessionKey: keyA, text: "hi" } as any);
     m.route({ type: "prompt", sessionKey: keyB, text: "yo" } as any);
-    const aResp = out.find((x) => x.type === "response" && (x as any).text === "r:hi");
-    const bResp = out.find((x) => x.type === "response" && (x as any).text === "r:yo");
+    // Live session output goes to broadcast, not the opener-scoped emit
+    const aResp = broadcast.find((x) => x.type === "response" && (x as any).text === "r:hi");
+    const bResp = broadcast.find((x) => x.type === "response" && (x as any).text === "r:yo");
     expect((aResp as any).sessionKey).toBe(keyA);
     expect((bResp as any).sessionKey).toBe(keyB);
   });
@@ -81,7 +96,7 @@ describe("SessionManager", () => {
     expect(made[1]!.isActive()).toBe(true);
   });
 
-  it("re-syncs an already-live session via reattach instead of recreating", async () => {
+  it("re-syncs an already-live session via replayTo instead of recreating", async () => {
     const { m, made } = mgr();
     let firstKey = "";
     await m.open("/a", "claude", "new", "n1", (x) => {
@@ -119,6 +134,7 @@ describe("SessionManager", () => {
       safelist: [],
       stores: { claude: new ClaudeStore(home), codex: emptyStore },
       makeSession: () => fake as any,
+      broadcast: () => {},
     });
     await m.open("/p", "claude", "latest", "n1", () => {});
     captured = fake.started;
@@ -128,20 +144,22 @@ describe("SessionManager", () => {
 
   it("runs claude and codex sessions for the SAME project independently", async () => {
     const made: string[] = [];
+    const broadcastOut: BridgeToClient[] = [];
     const manager = new SessionManager({
       safelist: [],
       stores: { claude: emptyStore, codex: emptyStore },
       makeSession: (agent) => { made.push(agent); return new Session(new FakeBackend()); },
+      broadcast: (m) => broadcastOut.push(m),
     });
-    const emitted: BridgeToClient[] = [];
+    const openerOut: BridgeToClient[] = [];
     let claudeKey = "";
     let codexKey = "";
     await manager.open("/p", "claude", "new", "n1", (m) => {
-      emitted.push(m);
+      openerOut.push(m);
       if (m.type === "session_started") claudeKey = (m as any).sessionKey;
     });
     await manager.open("/p", "codex", "new", "n2", (m) => {
-      emitted.push(m);
+      openerOut.push(m);
       if (m.type === "session_started") codexKey = (m as any).sessionKey;
     });
     expect(made).toEqual(["claude", "codex"]);
@@ -150,7 +168,8 @@ describe("SessionManager", () => {
 
     manager.route({ type: "prompt", sessionKey: codexKey, text: "hi" } as any);
     await new Promise((r) => setTimeout(r, 20));
-    const responses = emitted.filter((m) => m.type === "response" && (m as { text: string }).text);
+    // Live session responses go to broadcast, not the opener emit
+    const responses = broadcastOut.filter((m) => m.type === "response" && (m as { text: string }).text);
     expect(responses).toHaveLength(1);
     expect((responses[0] as { sessionKey: string }).sessionKey).toBe(codexKey);
   });
@@ -160,6 +179,7 @@ describe("SessionManager", () => {
       safelist: [],
       stores: { claude: emptyStore, codex: emptyStore },
       makeSession: () => new Session(new FakeBackend()),
+      broadcast: () => {},
     });
     const emitted: BridgeToClient[] = [];
     await manager.open("/p", "codex", "new", "n1", (m) => emitted.push(m));
@@ -170,20 +190,21 @@ describe("SessionManager", () => {
     expect(started.agent).toBe("codex");
   });
 
-  it("reattachAll re-attaches all live sessions and emits no session_started", async () => {
+  it("reattachAllTo re-attaches all live sessions and emits no session_started", async () => {
     const manager = new SessionManager({
       safelist: [],
       stores: { claude: emptyStore, codex: emptyStore },
       makeSession: () => new Session(new FakeBackend()),
+      broadcast: () => {},
     });
     const openOut: BridgeToClient[] = [];
     await manager.open("/Users/x/My Project", "codex", "new", "n1", (m) => openOut.push(m));
     const openKey = (openOut.find((m) => m.type === "session_started") as any).sessionKey as string;
 
     const replayed: BridgeToClient[] = [];
-    manager.reattachAll((m) => replayed.push(m));
+    manager.reattachAllTo((m) => replayed.push(m));
 
-    // reattachAll must NOT re-emit session_started (the manager already did on open)
+    // reattachAllTo must NOT re-emit session_started (the manager already did on open)
     expect(replayed.filter((m) => m.type === "session_started")).toHaveLength(0);
     // it should re-emit a status tagged with the session's key
     const statuses = replayed.filter((m) => m.type === "status");
@@ -197,6 +218,7 @@ describe("SessionManager", () => {
       safelist: [],   // every tool asks
       stores: { claude: emptyStore, codex: emptyStore },
       makeSession: () => { backend = new FakeBackend(); return new Session(backend); },
+      broadcast: () => {},
     });
     let key = "";
     await manager.open("/p", "claude", "new", "n1", (m) => { if (m.type === "session_started") key = (m as any).sessionKey; });
@@ -206,7 +228,7 @@ describe("SessionManager", () => {
 
     // A (re)connecting client replays state — the pending prompt must re-surface.
     const replayed: BridgeToClient[] = [];
-    manager.reattachAll((m) => replayed.push(m));
+    manager.reattachAllTo((m) => replayed.push(m));
     const req = replayed.find((m) => m.type === "permission_request") as any;
     expect(req).toBeDefined();
     expect(req.tool).toBe("Bash");
@@ -225,6 +247,7 @@ describe("SessionManager", () => {
       safelist: [],
       stores: { claude: store("claude"), codex: store("codex") },
       makeSession: () => new Session(new FakeBackend()),
+      broadcast: () => {},
     });
     await manager.open("/p", "codex", "latest", "n1", () => {});
     expect(calls).toEqual(["codex:/p:latest"]);
@@ -235,7 +258,7 @@ describe("sessionKey routing", () => {
   it("assigns a distinct sessionKey per open and routes by it", async () => {
     const out: any[] = [];
     const mgr = new SessionManager({ safelist: [], makeSession: () => new FakeSession() as any,
-      stores: { claude: fakeStore(), codex: fakeStore() } });
+      stores: { claude: fakeStore(), codex: fakeStore() }, broadcast: () => {} });
     await mgr.open("/p", "claude", "new", "n1", (m) => out.push(m));
     await mgr.open("/p", "claude", "new", "n2", (m) => out.push(m));
     const started = out.filter((m) => m.type === "session_started");
@@ -250,7 +273,7 @@ describe("sessionKey routing", () => {
     let made = 0;
     const store = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => [] };
     const mgr = new SessionManager({ safelist: [], makeSession: () => { made++; return new FakeSession() as any; },
-      stores: { claude: store as any, codex: fakeStore() as any } });
+      stores: { claude: store as any, codex: fakeStore() as any }, broadcast: () => {} });
     const out: any[] = [];
     await mgr.open("/p", "claude", "latest", "n1", (m) => out.push(m));
     await mgr.open("/p", "claude", "latest", "n2", (m) => out.push(m));   // same resumeId -> reattach
@@ -268,6 +291,7 @@ describe("sessionKey routing", () => {
       safelist: [],
       stores: { claude: fakeStore(), codex: store as any },
       makeSession: () => new Session(new FakeBackend()),   // FakeBackend's session_id event reports "sess-9"
+      broadcast: () => {},
     });
     await manager.open("/p", "codex", "latest", "n1", () => {});
     await new Promise((r) => setTimeout(r, 20));            // let the backend's session_id event land
@@ -282,13 +306,16 @@ describe("sessionKey routing", () => {
   it("re-sends history on reattach, before the buffer replay (restarted client is otherwise blank)", async () => {
     const items = [{ role: "user" as const, text: "from laptop", tools: [] }];
     const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => items };
+    let backend: FakeBackend | null = null;
     const manager = new SessionManager({
       safelist: [],
       stores: { claude: emptyStore, codex: store },
-      makeSession: () => new Session(new FakeBackend()),
+      makeSession: () => { backend = new FakeBackend(); backend.streamOnly = true; return new Session(backend); },
+      broadcast: () => {},
     });
     let key = "";
     await manager.open("/p", "codex", "latest", "n1", (m) => { if (m.type === "session_started") key = (m as any).sessionKey; });
+    // Start an in-flight turn (streamOnly: no turn_done, so replayTo will replay the partial response)
     manager.route({ type: "prompt", sessionKey: key, text: "hi" } as any);
     await new Promise((r) => setTimeout(r, 20));
 
@@ -302,6 +329,68 @@ describe("sessionKey routing", () => {
     expect(hist.items).toEqual(items);
     expect(hist.sessionKey).toBe(key);
     const types = out.map((m) => m.type);
+    // history must arrive before the partial response replay
     expect(types.indexOf("history")).toBeLessThan(types.indexOf("response"));
+  });
+});
+
+describe("SessionManager broadcast API", () => {
+  it("open returns the sessionKey and sends session_started to the opener", async () => {
+    const broadcast: BridgeToClient[] = [];
+    const opener: BridgeToClient[] = [];
+    const mgr = new SessionManager({
+      safelist: [],
+      stores: storesFake(),
+      makeSession: () => new FakeSession() as any,
+      broadcast: (m) => broadcast.push(m),
+    });
+    const key = await mgr.open("/p", "claude", "new", "nonce1", (m) => opener.push(m));
+    expect(typeof key).toBe("string");
+    expect(opener.some((m) => m.type === "session_started")).toBe(true);
+  });
+
+  it("route(prompt) broadcasts a user_message carrying text, sessionKey and origin", async () => {
+    const broadcast: BridgeToClient[] = [];
+    const mgr = new SessionManager({
+      safelist: [],
+      stores: storesFake(),
+      makeSession: () => new FakeSession() as any,
+      broadcast: (m) => broadcast.push(m),
+    });
+    const key = await mgr.open("/p", "claude", "new", "n", () => {});
+    mgr.route({ type: "prompt", sessionKey: key, text: "do it" } as any, "cli-9");
+    const um = broadcast.find((m) => m.type === "user_message") as any;
+    expect(um.text).toBe("do it");
+    expect(um.sessionKey).toBe(key);
+    expect(um.origin).toBe("cli-9");
+  });
+
+  it("liveSessionKeys returns only active session keys", async () => {
+    const made: FakeSession[] = [];
+    const mgr = new SessionManager({
+      safelist: [],
+      stores: storesFake(),
+      makeSession: () => { const s = new FakeSession(); made.push(s); return s as any; },
+      broadcast: () => {},
+    });
+    const k1 = await mgr.open("/a", "claude", "new", "n1", () => {});
+    const k2 = await mgr.open("/b", "claude", "new", "n2", () => {});
+    expect(mgr.liveSessionKeys().sort()).toEqual([k1, k2].sort());
+    made[0]!.active = false;
+    expect(mgr.liveSessionKeys()).toEqual([k2]);
+  });
+
+  it("reattachAllTo returns the keys of sessions it replayed", async () => {
+    const mgr = new SessionManager({
+      safelist: [],
+      stores: storesFake(),
+      makeSession: () => new FakeSession() as any,
+      broadcast: () => {},
+    });
+    const k1 = await mgr.open("/a", "claude", "new", "n1", () => {});
+    const k2 = await mgr.open("/b", "claude", "new", "n2", () => {});
+    const replayed: BridgeToClient[] = [];
+    const keys = mgr.reattachAllTo((m) => replayed.push(m));
+    expect(keys.sort()).toEqual([k1, k2].sort());
   });
 });
