@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Handsfree: vendored reference repo (consult-only, never shipped)
 /reference/
+
+# macOS
+.DS_Store

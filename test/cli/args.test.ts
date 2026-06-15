@@ -20,4 +20,13 @@ describe("parseArgs", () => {
   it("reads token from env when no flag", () => {
     expect(parseArgs([], "/p", { HANDSFREE_TOKEN: "envtok" }).token).toBe("envtok");
   });
+  it("handles missing flag values gracefully", () => {
+    // --port with no arg → NaN (Number(undefined))
+    const noPort = parseArgs(["--port"], "/p", {});
+    expect(Number.isNaN(noPort.port)).toBe(true);
+    // --session / --host / --token with no arg → undefined
+    expect(parseArgs(["--session"], "/p", {}).resume).toBeUndefined();
+    expect(parseArgs(["--host"], "/p", {}).host).toBeUndefined();
+    expect(parseArgs(["--token"], "/p", {}).token).toBeUndefined();
+  });
 });

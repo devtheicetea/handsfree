@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderEvent } from "../../src/cli/render.js";
+import { renderEvent, keyToDecision } from "../../src/cli/render.js";
 
 describe("renderEvent", () => {
   it("prints streamed response text without a trailing newline until done", () => {
@@ -18,5 +18,21 @@ describe("renderEvent", () => {
     expect(ask.permissionId).toBe("p1");
     expect(renderEvent({ type: "permission_resolved", sessionKey: "k", id: "p1" } as any, "me"))
       .toEqual({ write: "\n(answered on another device)\n", clearPermission: "p1" });
+  });
+});
+
+describe("keyToDecision", () => {
+  it("maps [a]llow, [s]ession, [d]eny to decisions (case-insensitive)", () => {
+    expect(keyToDecision("a")).toBe("allow");
+    expect(keyToDecision("A")).toBe("allow");
+    expect(keyToDecision("s")).toBe("allow_session");
+    expect(keyToDecision("S")).toBe("allow_session");
+    expect(keyToDecision("d")).toBe("deny");
+    expect(keyToDecision("D")).toBe("deny");
+  });
+  it("returns null for unrecognized keys", () => {
+    expect(keyToDecision("x")).toBeNull();
+    expect(keyToDecision("q")).toBeNull();
+    expect(keyToDecision("")).toBeNull();
   });
 });
