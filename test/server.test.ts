@@ -37,7 +37,12 @@ class FakeSession {
   isActive() { return this.active; }
   detachEmit() { this.emit = null; }
   get project() { return this.started?.projectPath ?? ""; }
-  reattach(emit: (m: BridgeToClient) => void) { this.reattached++; this.emit = emit; emit({ type: "session_started", sessionId: "x", projectPath: "/x", mode: "safelist" } as any); }
+  get currentTurn(): number { return 0; }
+  /** Replay in-flight state to a new subscriber (mirrors real Session.replayTo). */
+  replayTo(emit: (m: BridgeToClient) => void) {
+    this.reattached++;
+    emit({ type: "status", state: "idle" } as any);
+  }
   // Simulate a tool call asking for permission (uses the real policy the server wired in).
   askNow() { void (this.started as StartParams).policy.evaluate("Bash", {}); }
 }
@@ -140,7 +145,7 @@ describe("BridgeServer", () => {
     const port = await server.listen();
 
     const a = await connect(port);
-    a.send(JSON.stringify({ type: "hello" }));
+    a.send(JSON.stringify({ type: "hello", clientId: "client-A" }));
     await next(a);
     a.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 20));
@@ -149,10 +154,10 @@ describe("BridgeServer", () => {
 
     const b = await connect(port);
     const msgs = collect(b);
-    b.send(JSON.stringify({ type: "hello" }));
+    b.send(JSON.stringify({ type: "hello", clientId: "client-B" }));
     await waitFor(msgs, (m) => m.type === "hello_ok");
-    const replay = await waitFor(msgs, (m) => m.type === "session_started");
-    expect(replay).toMatchObject({ type: "session_started" });
+    // reattachAllTo replays the in-flight turn state (status) to the new client.
+    await waitFor(msgs, (m) => m.type === "status");
     expect(fake.reattached).toBe(1);
     b.close();
   });
@@ -166,7 +171,7 @@ describe("BridgeServer", () => {
     const port = await server.listen();
 
     const a = await connect(port);
-    a.send(JSON.stringify({ type: "hello" }));
+    a.send(JSON.stringify({ type: "hello", clientId: "client-A" }));
     await next(a);
     a.send(JSON.stringify({ type: "open_session", projectPath: "/x", resume: "new", nonce: "n0" }));
     await new Promise((r) => setTimeout(r, 20));
@@ -175,8 +180,10 @@ describe("BridgeServer", () => {
 
     const b = await connect(port);
     const msgs = collect(b);
-    b.send(JSON.stringify({ type: "hello" }));
-    await waitFor(msgs, (m) => m.type === "session_started");
+    b.send(JSON.stringify({ type: "hello", clientId: "client-B" }));
+    await waitFor(msgs, (m) => m.type === "hello_ok");
+    // Wait for reattach replay (status) before triggering a new permission request.
+    await waitFor(msgs, (m) => m.type === "status");
 
     // A tool now asks for permission AFTER reconnect — must reach the new socket.
     fake.askNow();
@@ -190,13 +197,13 @@ describe("BridgeServer", () => {
     class CrashSession {
       emit: ((m: BridgeToClient) => void) | null = null;
       active = false;
-      async start(p: StartParams) { this.emit = p.emit; p.emit({ type: "status", state: "error" }); p.emit({ type: "error", code: "session_crashed", message: "boom" }); }
+      async start(p: StartParams) { this.emit = p.emit; p.emit({ type: "status", state: "error" } as any); p.emit({ type: "error", code: "session_crashed", message: "boom" }); }
       prompt() {}
       abortTurn() {}
       async stop() {}
       isActive() { return this.active; }
       detachEmit() { this.emit = null; }
-      reattach() {}
+      replayTo() {}
     }
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
@@ -246,7 +253,7 @@ describe("BridgeServer", () => {
     ws.close();
   });
 
-  it("a second client takes over; the first is superseded", async () => {
+  it("a second client with the SAME clientId supersedes the first", async () => {
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
@@ -254,15 +261,43 @@ describe("BridgeServer", () => {
     });
     const port = await server.listen();
     const a = await connect(port);
-    a.send(JSON.stringify({ type: "hello" }));
+    a.send(JSON.stringify({ type: "hello", clientId: "shared-id" }));
     await next(a);   // hello_ok for the first client
     const aSuperseded = next(a);   // listen before b connects (avoids a message race)
     const b = await connect(port);
-    b.send(JSON.stringify({ type: "hello" }));
+    b.send(JSON.stringify({ type: "hello", clientId: "shared-id" }));
     // The new client connects successfully...
     expect(await next(b)).toMatchObject({ type: "hello_ok" });
-    // ...and the old one is told it was superseded.
+    // ...and the old one is told it was superseded (same clientId).
     expect(await aSuperseded).toMatchObject({ type: "error", code: "superseded" });
+    a.close(); b.close();
+  });
+
+  it("does not close a different client when a new clientId connects", async () => {
+    server = new BridgeServer({
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
+      makeSession: () => new FakeSession() as any,
+      stores: { claude: fakeStore(), codex: fakeStore() },
+    });
+    const port = await server.listen();
+
+    // Connect client A with its own clientId.
+    const a = await connect(port);
+    const aMsgs = collect(a);
+    a.send(JSON.stringify({ type: "hello", clientId: "A" }));
+    await waitFor(aMsgs, (m) => m.type === "hello_ok");
+
+    // Connect client B with a DIFFERENT clientId — must NOT supersede A.
+    const b = await connect(port);
+    const bMsgs = collect(b);
+    b.send(JSON.stringify({ type: "hello", clientId: "B" }));
+    await waitFor(bMsgs, (m) => m.type === "hello_ok");
+
+    // Give a moment for any spurious "superseded" to arrive.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // A must NOT have received a superseded error.
+    expect(aMsgs.find((m) => m.type === "error" && (m as any).code === "superseded")).toBeUndefined();
     a.close(); b.close();
   });
 
@@ -343,7 +378,7 @@ describe("BridgeServer", () => {
     const port = await server.listen();
     const ws = await connect(port);
     ws.send(JSON.stringify({ type: "hello" }));
-    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.6.0", agents: { claude: true, codex: true } });
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.7.0", agents: { claude: true, codex: true } });
     ws.close();
   });
 
@@ -388,9 +423,12 @@ describe("BridgeServer", () => {
     const act = await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 7);
     expect((act as any).preview).toMatchObject({ text: "from laptop" });
 
-    // a different (unwatched) session -> session_activity only
+    // a different (unwatched) session -> session_activity only (no external_turns since not mirrored)
     watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_2", items: [item], lastActive: 8, owned: false });
-    await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).sessionId === "thr_2");
+    // session_activity for thr_2 is NOT delivered because the client only mirrors thr_1
+    // (single-slot mirror). external_turns for thr_2 also not delivered.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(msgs.some((m) => m.type === "session_activity" && (m as any).sessionId === "thr_2")).toBe(false);
     expect(msgs.some((m) => m.type === "external_turns" && (m as any).sessionId === "thr_2")).toBe(false);
 
     // owned (bridge-authored) -> no external_turns echo even when watched
@@ -398,11 +436,13 @@ describe("BridgeServer", () => {
     await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 9);
     expect(msgs.filter((m) => m.type === "external_turns")).toHaveLength(1);
 
-    // unview clears the watch -> session_activity only from then on
+    // unview clears the watch -> no more mirror events
     ws.send(JSON.stringify({ type: "unview_session" }));
     await new Promise((r) => setTimeout(r, 30));
     watcherDeps!.onEvent({ agent: "codex", projectPath: "/p", sessionId: "thr_1", items: [item], lastActive: 10, owned: false });
-    await waitFor(msgs, (m) => m.type === "session_activity" && (m as any).lastActive === 10);
+    await new Promise((r) => setTimeout(r, 30));
+    // After unview, no session_activity for lastActive=10 either (not in mirror anymore)
+    expect(msgs.some((m) => m.type === "session_activity" && (m as any).lastActive === 10)).toBe(false);
     expect(msgs.filter((m) => m.type === "external_turns")).toHaveLength(1);
 
     ws.close();
@@ -546,7 +586,7 @@ describe("BridgeServer", () => {
   it("replies no_session tagged with the sessionKey for an unknown session", async () => {
     const fake = new FakeSession();
     server = new BridgeServer({
-      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [] },
+      config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => fake as any,
     });
     const port = await server.listen();
