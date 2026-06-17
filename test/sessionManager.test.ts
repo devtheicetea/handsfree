@@ -37,6 +37,8 @@ class FakeSession {
   abortTurn() { this.aborts++; }
   async stop() { this.active = false; }
   isActive() { return this.active; }
+  streaming = false;
+  backendSessionId: string | null = null;
   get project() { return this.started?.projectPath ?? ""; }
   detachEmit() { this.detached = true; this.emit = null; }
   replayTo(emit: (m: BridgeToClient) => void) { emit({ type: "status", state: "idle" } as any); }
@@ -418,6 +420,31 @@ describe("SessionManager broadcast API", () => {
     const replayed: BridgeToClient[] = [];
     const keys = mgr.reattachAllTo((m) => replayed.push(m));
     expect(keys.sort()).toEqual([k1, k2].sort());
+  });
+
+  it("reattach sends a catch-up history snapshot for an idle session", async () => {
+    const items = [{ role: "user" as const, text: "hi", tools: [] }, { role: "assistant" as const, text: "hello", tools: [] }];
+    const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: (_p, r) => (r === "new" ? undefined : r), history: () => items };
+    const made: FakeSession[] = [];
+    const mgr = new SessionManager({
+      safelist: [],
+      stores: { claude: store, codex: store },
+      makeSession: () => { const s = new FakeSession(); made.push(s); return s as any; },
+      broadcast: () => {},
+    });
+    await mgr.open("/p", "claude", "sid1", "n1", () => {});
+
+    // Idle (default) → catch-up snapshot is sent.
+    const idle: BridgeToClient[] = [];
+    mgr.reattachAllTo((m) => idle.push(m));
+    const hist = idle.find((x) => x.type === "history") as any;
+    expect(hist?.items).toEqual(items);
+
+    // Streaming → no snapshot; the in-flight buffer replay handles it.
+    made[0]!.streaming = true;
+    const live: BridgeToClient[] = [];
+    mgr.reattachAllTo((m) => live.push(m));
+    expect(live.some((x) => x.type === "history")).toBe(false);
   });
 
   it("liveKeyFor finds a live session by its on-disk id, and attachExisting wires a viewer to it", async () => {

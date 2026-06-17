@@ -117,6 +117,15 @@ export class SessionManager {
       if (ls.session.isActive()) {
         ls.session.replayTo(this.tagged(key, emit));
         this.replayPending(key, ls, emit);
+        // If no turn is in flight, replayTo can't recover a reply that completed
+        // while this client was disconnected (e.g. phone backgrounded mid-stream).
+        // Send an authoritative history snapshot so the client catches up.
+        if (!ls.session.streaming) {
+          const sid = ls.session.backendSessionId ?? ls.resumeId ?? "";
+          if (sid) {
+            this.tagged(key, emit)({ type: "history", items: this.stores[ls.agent].history(ls.projectPath, sid, HISTORY_LIMIT) } as BridgeToClient);
+          }
+        }
         keys.push(key);
       }
     }

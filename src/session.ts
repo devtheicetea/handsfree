@@ -129,6 +129,12 @@ export class Session {
     return this.sessionId;
   }
 
+  /** True while a turn is in flight (its partial reply is replayable via replayTo).
+   *  When false, a reconnecting client should be caught up with a history snapshot. */
+  get streaming(): boolean {
+    return this.currentStatus === "thinking";
+  }
+
   /** Stop routing output to the client immediately (project switch). */
   detachEmit(): void {
     this.emit = () => {};
