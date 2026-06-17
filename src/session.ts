@@ -1,6 +1,7 @@
 import type { AgentBackend, ImageAttachment } from "./backends/types.js";
 import type { PermissionPolicy } from "./permissions.js";
 import type { BridgeToClient } from "./protocol.js";
+import { debugLog, preview } from "./debug.js";
 
 export interface StartParams {
   projectPath: string;
@@ -38,6 +39,10 @@ export class Session {
   private send(msg: BridgeToClient): void {
     if (msg.type === "status") this.currentStatus = msg.state;
     if (msg.type === "response" && !msg.done && msg.text) this.turnBuffer.push(msg.text);
+    const base = { folder: this.projectPath, session: this.sessionId ?? "" };
+    if (msg.type === "response") debugLog("agent.response", { ...base, turn: msg.turn, done: msg.done, text: preview(msg.text) });
+    else if (msg.type === "status") debugLog("agent.status", { ...base, state: msg.state });
+    else if (msg.type === "error") debugLog("agent.error", { ...base, code: msg.code });
     this.emit?.(msg);
   }
 

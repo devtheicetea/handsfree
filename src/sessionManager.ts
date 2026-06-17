@@ -8,6 +8,7 @@ import type { SessionStore } from "./stores/types.js";
 import { ClaudeStore } from "./stores/claude.js";
 import { CodexStore } from "./stores/codex.js";
 import type { BridgeToClient, ClientMessage } from "./protocol.js";
+import { debugLog, preview } from "./debug.js";
 
 const HISTORY_LIMIT = 25;
 
@@ -99,7 +100,10 @@ export class SessionManager {
     const sessionKey = randomUUID();
     const policy = new PermissionPolicy(
       this.safelist,
-      (req) => this.tagged(sessionKey, this.broadcast)(this.permissionRequestMsg(req)),
+      (req) => {
+        debugLog("agent.permission", { folder: projectPath, session: this.sessions.get(sessionKey)?.session.backendSessionId ?? "", tool: req.tool, id: req.id });
+        this.tagged(sessionKey, this.broadcast)(this.permissionRequestMsg(req));
+      },
       (id) => this.broadcast({ type: "permission_resolved", sessionKey, id }),
     );
     const session = this.makeSession(agent, projectPath);
@@ -166,6 +170,8 @@ export class SessionManager {
     if (!ls) return false;
     switch (msg.type) {
       case "prompt":
+        debugLog("user.prompt", { folder: ls.projectPath, session: ls.session.backendSessionId ?? ls.resumeId ?? "",
+                                  origin: origin ?? "", text: preview(msg.text) });
         this.broadcast({ type: "user_message", sessionKey: msg.sessionKey, turn: ls.session.currentTurn + 1,
                          text: msg.text, attachments: msg.attachments, origin: origin ?? "" });
         ls.session.prompt(msg.text, msg.attachments);
@@ -179,6 +185,12 @@ export class SessionManager {
 
   has(sessionKey: string): boolean {
     return this.sessions.get(sessionKey)?.session.isActive() ?? false;
+  }
+
+  /** Folder + session id for a sessionKey — used to tag broadcast debug logs. */
+  describe(sessionKey: string): { folder: string; session: string } {
+    const ls = this.sessions.get(sessionKey);
+    return { folder: ls?.projectPath ?? "?", session: ls?.session.backendSessionId ?? ls?.resumeId ?? "?" };
   }
 
   /** True if a LIVE bridge session is writing this (agent, sessionId) — its file

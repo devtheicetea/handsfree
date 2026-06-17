@@ -6,6 +6,7 @@ import { Session } from "./session.js";
 import { mergeProjects } from "./projects.js";
 import { SessionManager } from "./sessionManager.js";
 import { ClientRegistry } from "./clients.js";
+import { debugLog } from "./debug.js";
 import { ClaudeStore } from "./stores/claude.js";
 import { CodexStore } from "./stores/codex.js";
 import { checkCodexAvailable } from "./backends/codex.js";
@@ -97,15 +98,22 @@ export class BridgeServer {
 
   private broadcastToSession(sessionKey: string | undefined, msg: BridgeToClient): void {
     if (!sessionKey) return;
-    for (const ws of this.clients.socketsForSession(sessionKey)) this.send(ws, msg);
+    const socks = this.clients.socketsForSession(sessionKey);
+    const d = this.sessions.describe(sessionKey);
+    debugLog("broadcast.session", { folder: d.folder, session: d.session, type: msg.type, clients: socks.length });
+    for (const ws of socks) this.send(ws, msg);
   }
 
   private broadcastToMirror(mirrorId: string, msg: BridgeToClient): void {
-    for (const ws of this.clients.socketsForMirror(mirrorId)) this.send(ws, msg);
+    const socks = this.clients.socketsForMirror(mirrorId);
+    debugLog("broadcast.mirror", { mirror: mirrorId, type: msg.type, clients: socks.length });
+    for (const ws of socks) this.send(ws, msg);
   }
 
   private broadcastToAll(msg: BridgeToClient): void {
-    for (const ws of this.clients.all()) this.send(ws, msg);
+    const socks = this.clients.all();
+    debugLog("broadcast.all", { type: msg.type, clients: socks.length });
+    for (const ws of socks) this.send(ws, msg);
   }
 
   /**
