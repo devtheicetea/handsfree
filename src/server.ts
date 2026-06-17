@@ -201,6 +201,11 @@ export class BridgeServer {
         this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
                         sessions: this.stores[msg.agent].listSessions(msg.projectPath) });
         return;
+      case "delete_session":
+        await this.sessions.deleteSession(msg.projectPath, msg.agent, msg.sessionId);
+        this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
+                        sessions: this.stores[msg.agent].listSessions(msg.projectPath) });
+        return;
       case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, agent: msg.agent, resume: msg.resume });
         if (msg.agent === "codex" && !this.sessions.hasForProject(msg.projectPath, msg.agent)) {

@@ -1,4 +1,4 @@
-import { readdirSync, statSync, readFileSync, existsSync } from "node:fs";
+import { readdirSync, statSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import type { AgentName } from "./backends/types.js";
@@ -8,6 +8,19 @@ import { lastTurn, parseHistory, type HistoryItem } from "./sessionHistory.js";
 
 export function defaultClaudeHome(): string {
   return join(homedir(), ".claude");
+}
+
+/** Delete a Claude session's `.jsonl` (found by id across project dirs). Returns true if removed. */
+export function deleteClaudeSession(claudeHome: string, sessionId: string): boolean {
+  const projectsRoot = join(claudeHome, "projects");
+  if (!existsSync(projectsRoot)) return false;
+  for (const entry of readdirSync(projectsRoot)) {
+    const file = join(projectsRoot, entry, `${sessionId}.jsonl`);
+    if (existsSync(file)) {
+      try { unlinkSync(file); return true; } catch { return false; }
+    }
+  }
+  return false;
 }
 
 interface SessionFile {

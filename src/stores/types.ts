@@ -22,6 +22,8 @@ export interface SessionStore {
   listSessions(projectPath: string): SessionMeta[];
   resolveResume(projectPath: string, resume: "latest" | "new" | string): string | undefined;
   history(projectPath: string, resume: string, limit: number): HistoryItem[];
+  /** Permanently delete a session's on-disk file (by id). Returns true if removed. */
+  deleteSession(projectPath: string, sessionId: string): boolean;
 }
 
 /** Shared preview shaping: previews are capped the same for every agent. */

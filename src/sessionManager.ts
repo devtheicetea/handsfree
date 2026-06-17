@@ -215,4 +215,16 @@ export class SessionManager {
     await Promise.all([...this.sessions.values()].map((ls) => ls.session.stop()));
     this.sessions.clear();
   }
+
+  /** Permanently delete a session: stop it if it's currently live, then remove its file. */
+  async deleteSession(projectPath: string, agent: AgentName, sessionId: string): Promise<boolean> {
+    const key = this.liveKeyFor(agent, sessionId);
+    if (key) {
+      const ls = this.sessions.get(key);
+      if (ls) { await ls.session.stop(); this.sessions.delete(key); }
+    }
+    const ok = this.stores[agent].deleteSession(projectPath, sessionId);
+    debugLog("session.delete", { folder: projectPath, session: sessionId, agent, wasLive: key != null, ok });
+    return ok;
+  }
 }

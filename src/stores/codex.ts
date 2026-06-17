@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { HistoryItem } from "../sessionHistory.js";
@@ -176,5 +176,34 @@ export class CodexStore implements SessionStore {
       ? (all.find((s) => s.threadId === resume) ?? all.find((s) => s.cwd === projectPath))
       : all.find((s) => s.cwd === projectPath);
     return match ? parseCodexHistory(match.text, limit) : [];
+  }
+
+  deleteSession(_projectPath: string, sessionId: string): boolean {
+    const root = join(this.codexHome, "sessions");
+    if (!existsSync(root)) return false;
+    const walk = (dir: string): boolean => {
+      for (const entry of readdirSync(dir)) {
+        const p = join(dir, entry);
+        let st;
+        try { st = statSync(p); } catch { continue; }
+        if (st.isDirectory()) { if (walk(p)) return true; continue; }
+        if (!(entry.startsWith("rollout-") && entry.endsWith(".jsonl"))) continue;
+        let first: string;
+        try {
+          const text = readFileSync(p, "utf8");
+          const nl = text.indexOf("\n");
+          first = (nl >= 0 ? text.slice(0, nl) : text).trim();
+        } catch { continue; }
+        try {
+          const meta = JSON.parse(first) as { type?: string; payload?: { id?: string } };
+          if (meta.type === "session_meta" && meta.payload?.id === sessionId) {
+            unlinkSync(p);
+            return true;
+          }
+        } catch { continue; }
+      }
+      return false;
+    };
+    try { return walk(root); } catch { return false; }
   }
 }

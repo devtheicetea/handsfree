@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { titleFrom, listSessionsFor } from "../src/projects.js";
+import { titleFrom, listSessionsFor, deleteClaudeSession } from "../src/projects.js";
 
 const line = (o: unknown) => JSON.stringify(o);
 
@@ -80,6 +80,20 @@ describe("listSessionsFor", () => {
     const home = mkdtempSync(join(tmpdir(), "claude-ls2-"));
     mkdirSync(join(home, "projects"), { recursive: true });
     expect(listSessionsFor(home, "/nope")).toEqual([]);
+    rmSync(home, { recursive: true, force: true });
+  });
+});
+
+describe("deleteClaudeSession", () => {
+  it("removes the session file by id and drops it from listings", () => {
+    const home = mkdtempSync(join(tmpdir(), "claude-del-"));
+    const dir = join(home, "projects", "-Users-me-app");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "keep.jsonl"), line({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "a" } }) + "\n");
+    writeFileSync(join(dir, "gone.jsonl"), line({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "b" } }) + "\n");
+    expect(deleteClaudeSession(home, "gone")).toBe(true);
+    expect(listSessionsFor(home, "/Users/me/app").map((s) => s.sessionId)).toEqual(["keep"]);
+    expect(deleteClaudeSession(home, "missing")).toBe(false);   // unknown id
     rmSync(home, { recursive: true, force: true });
   });
 });

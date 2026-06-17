@@ -1,4 +1,4 @@
-import { listClaudeProjects, historyForProject, resolveResume, defaultClaudeHome, listSessionsFor } from "../projects.js";
+import { listClaudeProjects, historyForProject, resolveResume, defaultClaudeHome, listSessionsFor, deleteClaudeSession } from "../projects.js";
 import type { HistoryItem } from "../sessionHistory.js";
 import type { SessionStore, SessionMeta, StoreProject } from "./types.js";
 
@@ -19,5 +19,9 @@ export class ClaudeStore implements SessionStore {
 
   history(projectPath: string, resume: string, limit: number): HistoryItem[] {
     return historyForProject(this.claudeHome, projectPath, resume, limit);
+  }
+
+  deleteSession(_projectPath: string, sessionId: string): boolean {
+    return deleteClaudeSession(this.claudeHome, sessionId);
   }
 }
