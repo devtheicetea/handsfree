@@ -1,25 +1,48 @@
-# Handsfree Bridge
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <img src="assets/logo.png" alt="Handsfree" height="132">
+  </picture>
+</p>
 
-English | [简体中文](README.zh-CN.md)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.png">
+    <img src="assets/wordmark.png" alt="Handsfree" height="54">
+  </picture>
+</p>
 
-![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
-![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
+<p align="center"><b>Talk to your coding agent — hands-free, from your phone.</b></p>
 
-**Talk to your coding agent.** This is the self-hosted backend for the
+<p align="center">English | <a href="README.zh-CN.md">简体中文</a></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white" alt="Node">
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome">
+</p>
+
+This is the self-hosted backend for the
 [Handsfree](https://contraststudio.app/handsfree) iOS app: it runs on the
 computer where your coding agent lives, drives it on your behalf, and exposes a
 WebSocket your phone connects to.
 
+> **100% on-device voice — and completely free.** Speech-to-text and
+> text-to-speech run entirely on Apple's built-in, on-device engines inside the
+> iOS app. There's no cloud voice API, no separate voice model to host, no
+> subscription and no per-minute fees — nothing extra to pay for. Talk to your
+> coding agent and hear it reply, fully hands-free, **anywhere and any time**.
+
+- **Free, on-device voice.** All audio stays on the phone (Apple's built-in
+  speech recognition + text-to-speech). No online voice model, no API keys for
+  voice, no extra cost — the bridge itself is text-only.
 - Drives **Claude Code** (via the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript)) and **OpenAI Codex** (via the Codex CLI), side by side.
-- Streams replies token-by-token and routes **tool-permission prompts** to the phone — the bridge stays the permission gate.
+- Streams replies token-by-token and routes **tool-permission prompts** and **multiple-choice questions** to the phone — the bridge stays the permission gate.
 - One live session per `(project, agent)`; multiple phones can view and drive the **same** session at once.
 - LAN out of the box, or **Tailscale** for talking to your agent from anywhere. Optional shared-secret token.
 
 The bridge speaks a plain text/JSON WebSocket protocol (see `src/protocol.ts`).
-All audio — speech recognition and text-to-speech — happens on-device in the iOS
-app; the bridge itself is text-only.
 
 ## Architecture
 
@@ -61,7 +84,14 @@ the bridge is the single writer (see [Sessions & concurrency](#sessions--concurr
 - *(Optional, for remote access)* [Tailscale](https://tailscale.com) on both the
   computer and the phone, signed in to the same account.
 
-## Quickstart
+## Setup
+
+Three quick steps — the same ones the app walks you through.
+
+### 1. Start the bridge
+
+On the computer where your coding agent runs, install and start the bridge, then
+leave it running:
 
 ```bash
 git clone https://github.com/devtheicetea/handsfree.git
@@ -70,21 +100,33 @@ npm install && npm run build
 npm start
 ```
 
-On start, the bridge prints a **pairing QR code** and a `handsfree://connect?…`
-URL. In the Handsfree app, tap **Scan QR Code** and point the camera at it — or
-tap **Enter connection manually** and type the host/port shown beneath the QR.
+Needs Node 20+, with your coding agent installed and logged in (see
+[Prerequisites](#prerequisites)).
+
+### 2. Connect your phone
+
+- **On the same Wi-Fi** — if your phone and computer share a network, there's
+  nothing to set up.
+- **Away / remote** — install [Tailscale](https://tailscale.com) on both the
+  computer and the phone and sign in to the same account. The bridge then
+  advertises your Tailscale address automatically and the phone reaches it from
+  anywhere — no port forwarding. Leave the default `HANDSFREE_BIND=0.0.0.0`, or
+  set it to your Tailscale IP to refuse all other interfaces.
 
 The advertised host is chosen automatically: your **Tailscale** IP if available,
 otherwise your **LAN** IP, otherwise `localhost`. Override it with
 `HANDSFREE_HOST` (see [Configuration](#configuration)).
 
-### Remote access (Tailscale)
+### 3. Pair the app
 
-If your phone and computer aren't on the same Wi-Fi, install Tailscale on both
-and sign in to the same account. The bridge then advertises your Tailscale
-address automatically and the phone reaches it from anywhere — no port
-forwarding. Leave the default `HANDSFREE_BIND=0.0.0.0`, or set it to your
-Tailscale IP to refuse all other interfaces.
+On start, the bridge prints a **pairing QR code** and a `handsfree://connect?…`
+URL in its terminal, with the host and port (default **8744**) beneath it. In the
+[Handsfree app](https://contraststudio.app/handsfree):
+
+- tap **Scan QR Code** and point the camera at it, or
+- tap **Enter connection manually** and type the host and port shown.
+
+That's it — start talking to your coding agent, hands-free.
 
 ## Configuration
 
@@ -183,4 +225,4 @@ prompts. Commands: `/auto`, `/ask`, `/abort`, `/quit`.
 
 ## License
 
-MIT
+[MIT](LICENSE) © Contrast Studio LLC

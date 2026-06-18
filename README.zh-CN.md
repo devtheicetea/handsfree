@@ -1,23 +1,44 @@
-# Handsfree Bridge
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <img src="assets/logo.png" alt="Handsfree" height="132">
+  </picture>
+</p>
 
-[English](README.md) | 简体中文
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.png">
+    <img src="assets/wordmark.png" alt="Handsfree" height="54">
+  </picture>
+</p>
 
-![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
-![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
+<p align="center"><b>用语音与你的编程智能体对话——解放双手，随时随地。</b></p>
 
-**用语音与你的编程智能体对话。** 这是 [Handsfree](https://contraststudio.app/handsfree)
-iOS 应用的自托管后端：它运行在你的编程智能体所在的电脑上，代表你驱动该智能体，
-并对外暴露一个供手机连接的 WebSocket。
+<p align="center"><a href="README.md">English</a> | 简体中文</p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white" alt="Node">
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome">
+</p>
+
+这是 [Handsfree](https://contraststudio.app/handsfree) iOS 应用的自托管后端：
+它运行在你的编程智能体所在的电脑上，代表你驱动该智能体，并对外暴露一个供手机连接的 WebSocket。
+
+> **100% 设备本地语音——而且完全免费。** 语音识别与文字转语音都在 iOS 应用内、
+> 使用 Apple 内置的设备本地引擎运行。没有云端语音 API，无需自建语音模型，没有订阅、
+> 也没有按分钟计费——不需要为语音额外付费。与你的编程智能体对话、听它回复，
+> 全程解放双手，**随时随地**。
+
+- **免费的设备本地语音。** 所有音频都留在手机上（Apple 内置的语音识别 + 文字转语音）。
+  没有在线语音模型，语音无需 API key，也没有额外费用——桥接服务本身只处理文本。
 - 同时驱动 **Claude Code**（通过 [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript)）和 **OpenAI Codex**（通过 Codex CLI）。
-- 逐字流式返回回复，并将 **工具权限请求** 转发到手机——桥接服务始终是权限关卡。
+- 逐字流式返回回复，并将 **工具权限请求** 和 **多选问题** 转发到手机——桥接服务始终是权限关卡。
 - 每个 `(项目, 智能体)` 只有一个实时会话；多部手机可以同时查看并驱动**同一个**会话。
 - 默认支持局域网，或使用 **Tailscale** 随时随地与你的智能体对话。可选的共享密钥令牌。
 
 桥接服务使用纯文本/JSON 的 WebSocket 协议（见 `src/protocol.ts`）。
-所有音频——语音识别与文字转语音——都在 iOS 应用的设备本地完成；桥接服务本身只处理文本。
 
 ## 架构
 
@@ -58,7 +79,13 @@ flowchart LR
 - *（可选，用于远程访问）* 在电脑和手机上都安装 [Tailscale](https://tailscale.com)，
   并登录同一账户。
 
-## 快速开始
+## 设置
+
+三个简单步骤——与应用引导你完成的步骤一致。
+
+### 1. 启动桥接服务
+
+在运行你编程智能体的电脑上，安装并启动桥接服务，然后让它保持运行：
 
 ```bash
 git clone https://github.com/devtheicetea/handsfree.git
@@ -67,18 +94,27 @@ npm install && npm run build
 npm start
 ```
 
-启动时，桥接服务会打印一个**配对二维码**和一个 `handsfree://connect?…` 链接。
-在 Handsfree 应用中，点按**扫描二维码**并用相机对准它——或者点按**手动输入连接信息**，
-输入二维码下方显示的主机/端口。
+需要 Node 20+，并已安装并登录你的编程智能体（见 [前置条件](#前置条件)）。
+
+### 2. 连接你的手机
+
+- **同一 Wi-Fi 下** — 如果手机和电脑在同一网络，无需任何设置。
+- **外出 / 远程** — 在电脑和手机上都安装 [Tailscale](https://tailscale.com) 并登录同一账户。
+  桥接服务会自动公布你的 Tailscale 地址，手机即可随时随地连接——无需端口转发。
+  保持默认的 `HANDSFREE_BIND=0.0.0.0`，或将其设为你的 Tailscale IP 以拒绝其他网络接口。
 
 对外公布的主机会自动选择：优先 **Tailscale** IP，其次 **局域网** IP，最后 `localhost`。
 可通过 `HANDSFREE_HOST` 覆盖（见 [配置](#配置)）。
 
-### 远程访问（Tailscale）
+### 3. 配对应用
 
-如果手机和电脑不在同一 Wi-Fi 下，在两端都安装 Tailscale 并登录同一账户。
-桥接服务会自动公布你的 Tailscale 地址，手机即可随时随地连接——无需端口转发。
-保持默认的 `HANDSFREE_BIND=0.0.0.0`，或将其设为你的 Tailscale IP 以拒绝其他网络接口。
+启动时，桥接服务会在终端打印一个**配对二维码**和一个 `handsfree://connect?…` 链接，
+下方附有主机和端口（默认 **8744**）。在 [Handsfree 应用](https://contraststudio.app/handsfree) 中：
+
+- 点按**扫描二维码**并用相机对准它，或
+- 点按**手动输入连接信息**，输入显示的主机和端口。
+
+完成——开始解放双手，与你的编程智能体对话。
 
 ## 配置
 
@@ -164,4 +200,4 @@ node test/client.ts               # Node 22.6+（内置 TS）。否则：npx tsx
 
 ## 许可证
 
-MIT
+[MIT](LICENSE) © Contrast Studio LLC
