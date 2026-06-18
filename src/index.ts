@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "./config.js";
@@ -5,7 +7,30 @@ import { createLogger } from "./logger.js";
 import { BridgeServer } from "./server.js";
 import { printPairing } from "./pairing.js";
 
+const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
+
+const HELP = `handsfree-bridge ${pkg.version} — self-hosted backend for the Handsfree iOS app
+
+Usage:
+  handsfree-bridge            Start the bridge and print a pairing QR code.
+  handsfree-bridge --version  Print the version.
+  handsfree-bridge --help     Show this help.
+
+Configuration (environment variables):
+  HANDSFREE_PORT     Listen port (default 8744).
+  HANDSFREE_BIND     Bind address (default 0.0.0.0).
+  HANDSFREE_HOST     Host advertised in the pairing QR/URL (default: Tailscale IP -> LAN IP -> localhost).
+  HANDSFREE_TOKEN    Optional shared secret the app must send.
+  HANDSFREE_SAFELIST Comma-separated tools auto-approved in safelist mode.
+  HANDSFREE_MODEL    Model for Claude sessions (e.g. sonnet, opus).
+  HANDSFREE_CODEX_PATH  Full path to the codex binary.
+  HANDSFREE_ENV      prod (default) or debug (verbose logging).`;
+
 async function main(): Promise<void> {
+  const arg = process.argv[2];
+  if (arg === "-v" || arg === "--version") { console.log(pkg.version); return; }
+  if (arg === "-h" || arg === "--help") { console.log(HELP); return; }
+
   const config = loadConfig(process.env);
   const logger = createLogger(join(tmpdir(), "handsfree-bridge.log"));
   const server = new BridgeServer({ config, logger });

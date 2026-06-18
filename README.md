@@ -91,8 +91,19 @@ Three quick steps — the same ones the app walks you through.
 
 ### 1. Start the bridge
 
-On the computer where your coding agent runs, install and start the bridge, then
-leave it running:
+On the computer where your coding agent runs, start the bridge and leave it
+running:
+
+```bash
+npx handsfree-bridge
+```
+
+Needs Node 20+, with your coding agent installed and logged in (see
+[Prerequisites](#prerequisites)). Configure it with the environment variables in
+[Configuration](#configuration), e.g. `HANDSFREE_TOKEN=… npx handsfree-bridge`.
+
+<details>
+<summary>Or run from source</summary>
 
 ```bash
 git clone https://github.com/devtheicetea/handsfree.git
@@ -100,9 +111,7 @@ cd handsfree
 npm install && npm run build
 npm start
 ```
-
-Needs Node 20+, with your coding agent installed and logged in (see
-[Prerequisites](#prerequisites)).
+</details>
 
 ### 2. Connect your phone
 

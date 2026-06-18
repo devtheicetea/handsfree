@@ -86,7 +86,17 @@ flowchart LR
 
 ### 1. 启动桥接服务
 
-在运行你编程智能体的电脑上，安装并启动桥接服务，然后让它保持运行：
+在运行你编程智能体的电脑上，启动桥接服务并让它保持运行：
+
+```bash
+npx handsfree-bridge
+```
+
+需要 Node 20+，并已安装并登录你的编程智能体（见 [前置条件](#前置条件)）。可用
+[配置](#配置)中的环境变量进行配置，例如 `HANDSFREE_TOKEN=… npx handsfree-bridge`。
+
+<details>
+<summary>或从源码运行</summary>
 
 ```bash
 git clone https://github.com/devtheicetea/handsfree.git
@@ -94,8 +104,7 @@ cd handsfree
 npm install && npm run build
 npm start
 ```
-
-需要 Node 20+，并已安装并登录你的编程智能体（见 [前置条件](#前置条件)）。
+</details>
 
 ### 2. 连接你的手机
 

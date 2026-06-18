@@ -1,15 +1,23 @@
 {
   "name": "handsfree-bridge",
   "version": "0.1.0",
-  "private": true,
+  "description": "Self-hosted backend for the Handsfree iOS app — talk to Claude Code or Codex hands-free from your phone.",
   "type": "module",
   "license": "MIT",
+  "author": "Contrast Studio LLC",
+  "homepage": "https://github.com/devtheicetea/handsfree#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/devtheicetea/handsfree.git" },
+  "bugs": { "url": "https://github.com/devtheicetea/handsfree/issues" },
+  "keywords": ["claude", "claude-code", "codex", "coding-agent", "voice", "handsfree", "websocket", "bridge"],
   "engines": {
     "node": ">=20"
   },
   "bin": {
     "handsfree-bridge": "dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "node --experimental-strip-types src/index.ts",
@@ -17,7 +25,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pair": "node dist/pairing-cli.js"
+    "pair": "node dist/pairing-cli.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.0",
