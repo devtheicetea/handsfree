@@ -10,6 +10,8 @@ export interface StartParams {
   policy: PermissionPolicy;
   /** Surface a multiple-choice question to the client; resolves with selections. */
   askUser?: (questions: Question[]) => Promise<string[]>;
+  /** Fired once the backend's real session id is learned (for mode persistence). */
+  onSessionId?: (id: string) => void;
   emit: (msg: BridgeToClient) => void;
 }
 
@@ -51,7 +53,7 @@ export class Session {
 
   async start(params: StartParams): Promise<void> {
     if (this.loop) throw new Error("session already started; call stop() first");
-    const { projectPath, resume, policy, askUser, emit } = params;
+    const { projectPath, resume, policy, askUser, onSessionId, emit } = params;
     this.emit = emit;
     this.projectPath = projectPath;
     this.policy = policy;
@@ -70,6 +72,7 @@ export class Session {
         for await (const ev of events) {
           if (ev.kind === "session_id") {
             this.sessionId = ev.id;
+            onSessionId?.(ev.id);
           } else if (ev.kind === "text_delta") {
             this.send({ type: "response", turn: this.turnNo, text: ev.text, done: false } as any);
           } else if (ev.kind === "turn_done") {

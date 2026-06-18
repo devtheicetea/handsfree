@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "../src/sessionManager.js";
+import { ModeStore } from "../src/modeStore.js";
 import { Session } from "../src/session.js";
 import { ClaudeStore } from "../src/stores/claude.js";
 import type { BridgeToClient } from "../src/protocol.js";
@@ -499,5 +500,50 @@ describe("SessionManager broadcast API", () => {
     const pending = made[0]!.started!.askUser!([{ question: "Which?", options: [{ label: "A" }, { label: "B" }] }]);
     m.route({ type: "abort", sessionKey: key } as any);
     expect(await pending).toEqual([]);
+  });
+});
+
+describe("SessionManager mode persistence", () => {
+  const tmpStore = () => new ModeStore(join(mkdtempSync(join(tmpdir(), "hf-mm-")), "m.json"));
+  function setup(modeStore: ModeStore) {
+    const made: FakeSession[] = [];
+    const m = new SessionManager({
+      safelist: [],
+      stores: storesFake(),
+      modeStore,
+      makeSession: () => { const s = new FakeSession(); made.push(s); return s as any; },
+      broadcast: () => {},
+    });
+    return { m, made };
+  }
+
+  it("set_mode persists by the session's durable id", async () => {
+    const store = tmpStore();
+    const { m } = setup(store);
+    const out: BridgeToClient[] = [];
+    const key = await m.open("/p", "claude", "sid1", "n1", (x) => out.push(x));
+    m.route({ type: "set_mode", sessionKey: key, mode: "auto" } as any);
+    expect(store.get("claude", "sid1")).toBe("auto");
+  });
+
+  it("open restores a previously-saved mode into session_started", async () => {
+    const store = tmpStore();
+    store.set("claude", "sid1", "auto");
+    const { m } = setup(store);
+    const out: BridgeToClient[] = [];
+    await m.open("/p", "claude", "sid1", "n1", (x) => out.push(x));
+    const started = out.find((x) => x.type === "session_started") as any;
+    expect(started.mode).toBe("auto");
+  });
+
+  it("persists a pre-first-turn mode once the session id is learned", async () => {
+    const store = tmpStore();
+    const { m, made } = setup(store);
+    const out: BridgeToClient[] = [];
+    const key = await m.open("/p", "claude", "new", "n1", (x) => out.push(x));   // resumeId null
+    m.route({ type: "set_mode", sessionKey: key, mode: "auto" } as any);          // no id yet → not persisted
+    expect(store.get("claude", "real-id")).toBeUndefined();
+    made[0]!.started!.onSessionId!("real-id");                                    // id arrives
+    expect(store.get("claude", "real-id")).toBe("auto");
   });
 });

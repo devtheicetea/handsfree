@@ -378,7 +378,7 @@ describe("BridgeServer", () => {
     const port = await server.listen();
     const ws = await connect(port);
     ws.send(JSON.stringify({ type: "hello" }));
-    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.7.0", agents: { claude: true, codex: true } });
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.8.0", agents: { claude: true, codex: true } });
     ws.close();
   });
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Session } from "./session.js";
 import { PermissionPolicy, type AskRequest } from "./permissions.js";
 import { QuestionRegistry, type QuestionRequest } from "./questions.js";
+import { ModeStore } from "./modeStore.js";
 import { ClaudeBackend } from "./backends/claude.js";
 import { CodexBackend } from "./backends/codex.js";
 import type { AgentName } from "./backends/types.js";
@@ -28,6 +29,7 @@ export interface SessionManagerDeps {
   stores?: { claude: SessionStore; codex: SessionStore };
   codexPath?: string | null;
   model?: string | null;
+  modeStore?: ModeStore;   // durable per-session permission mode (default ~/.handsfree/modes.json)
   broadcast: (m: BridgeToClient) => void;   // server fan-out by m.sessionKey
 }
 
@@ -41,6 +43,7 @@ export class SessionManager {
   private readonly safelist: string[];
   private readonly makeSession: (agent: AgentName, projectPath: string) => Session;
   private readonly stores: { claude: SessionStore; codex: SessionStore };
+  private readonly modeStore: ModeStore;
   private readonly broadcast: (m: BridgeToClient) => void;
 
   constructor(deps: SessionManagerDeps) {
@@ -52,6 +55,7 @@ export class SessionManager {
         ? new Session(new ClaudeBackend({ model }))
         : new Session(new CodexBackend({ codexPath })));
     this.stores = deps.stores ?? { claude: new ClaudeStore(), codex: new CodexStore() };
+    this.modeStore = deps.modeStore ?? new ModeStore();
     this.broadcast = deps.broadcast;
   }
 
@@ -123,6 +127,10 @@ export class SessionManager {
       },
       (id) => this.broadcast({ type: "question_resolved", sessionKey, id }),
     );
+    // Restore the user's last-chosen mode for this session id — durable across the
+    // disconnect-grace teardown and bridge restarts; falls back to the safelist default.
+    const savedMode = resumeId ? this.modeStore.get(agent, resumeId) : undefined;
+    if (savedMode) policy.setMode(savedMode);
     const session = this.makeSession(agent, projectPath);
     this.sessions.set(sessionKey, { session, policy, questions, projectPath, agent, resumeId });
     toOpener({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
@@ -130,6 +138,9 @@ export class SessionManager {
     await session.start({
       projectPath, resume: resumeId ?? undefined, policy,
       askUser: (qs) => questions.ask(qs),
+      // A fresh session's id isn't known until its first turn — persist any
+      // non-default mode the user set before then, once the id arrives.
+      onSessionId: (id) => { const m = policy.getMode(); if (m !== "safelist") this.modeStore.set(agent, id, m); },
       emit: this.tagged(sessionKey, this.broadcast),
     });
     return sessionKey;
@@ -198,7 +209,13 @@ export class SessionManager {
         ls.session.prompt(msg.text, msg.attachments);
         return true;
       case "abort": ls.session.abortTurn(); ls.policy.abortAll(); ls.questions.abortAll(); return true;
-      case "set_mode": ls.policy.setMode(msg.mode); return true;
+      case "set_mode": {
+        ls.policy.setMode(msg.mode);
+        // Persist by the durable session id so the choice survives a restart.
+        const id = ls.session.backendSessionId ?? ls.resumeId;
+        if (id) this.modeStore.set(ls.agent, id, msg.mode);
+        return true;
+      }
       case "permission_response": ls.policy.resolve(msg.id, msg.decision); return true;
       case "question_response": ls.questions.resolve(msg.id, msg.selections); return true;
       default: return false;
