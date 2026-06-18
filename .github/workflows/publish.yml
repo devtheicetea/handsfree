@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # required for npm provenance
+      id-token: write # OIDC token for npm Trusted Publishing (no stored secret)
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +21,9 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing (OIDC) needs npm >= 11.5.1; Node 20 ships npm 10.
+      - run: npm install -g npm@latest
 
       - run: npm ci
 
@@ -33,7 +36,6 @@ jobs:
 
       - run: npm test
 
-      # prepublishOnly rebuilds dist/. --provenance needs id-token + a public repo.
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # No NODE_AUTH_TOKEN: npm authenticates via the OIDC id-token (Trusted
+      # Publishing). prepublishOnly rebuilds dist/; provenance is attached automatically.
+      - run: npm publish --access public
