@@ -1,5 +1,6 @@
 import type { AgentBackend, ImageAttachment } from "./backends/types.js";
 import type { PermissionPolicy } from "./permissions.js";
+import type { Question } from "./questions.js";
 import type { BridgeToClient } from "./protocol.js";
 import { debugLog, preview } from "./debug.js";
 
@@ -7,6 +8,8 @@ export interface StartParams {
   projectPath: string;
   resume: string | undefined;
   policy: PermissionPolicy;
+  /** Surface a multiple-choice question to the client; resolves with selections. */
+  askUser?: (questions: Question[]) => Promise<string[]>;
   emit: (msg: BridgeToClient) => void;
 }
 
@@ -48,7 +51,7 @@ export class Session {
 
   async start(params: StartParams): Promise<void> {
     if (this.loop) throw new Error("session already started; call stop() first");
-    const { projectPath, resume, policy, emit } = params;
+    const { projectPath, resume, policy, askUser, emit } = params;
     this.emit = emit;
     this.projectPath = projectPath;
     this.policy = policy;
@@ -62,6 +65,7 @@ export class Session {
           projectPath,
           resume,
           evaluate: (tool, input) => policy.evaluate(tool, input),
+          askUser,
         });
         for await (const ev of events) {
           if (ev.kind === "session_id") {

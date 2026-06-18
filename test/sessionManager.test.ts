@@ -470,4 +470,34 @@ describe("SessionManager broadcast API", () => {
     expect(out.some((x) => x.type === "history" && (x as any).sessionKey === key)).toBe(true);
     expect(out.some((x) => x.type === "status" && (x as any).sessionKey === key)).toBe(true);
   });
+
+  it("askUser broadcasts a tagged question_request and a response resolves the tool", async () => {
+    const out: BridgeToClient[] = [];
+    const { m, made, broadcast } = mgr();
+    await m.open("/q", "claude", "new", "n1", (x) => out.push(x));
+    const key = (out.find((x) => x.type === "session_started") as any).sessionKey as string;
+
+    const questions = [{ question: "Which?", options: [{ label: "A" }, { label: "B" }] }];
+    const pending = made[0]!.started!.askUser!(questions);
+
+    const req = broadcast.find((x) => x.type === "question_request") as any;
+    expect(req).toBeTruthy();
+    expect(req.sessionKey).toBe(key);
+    expect(req.questions).toEqual(questions);
+
+    const routed = m.route({ type: "question_response", sessionKey: key, id: req.id, selections: ["B"] } as any);
+    expect(routed).toBe(true);
+    expect(await pending).toEqual(["B"]);
+    expect(broadcast.some((x) => x.type === "question_resolved" && (x as any).id === req.id)).toBe(true);
+  });
+
+  it("abort cancels a pending question (resolves empty)", async () => {
+    const out: BridgeToClient[] = [];
+    const { m, made } = mgr();
+    await m.open("/q", "claude", "new", "n1", (x) => out.push(x));
+    const key = (out.find((x) => x.type === "session_started") as any).sessionKey as string;
+    const pending = made[0]!.started!.askUser!([{ question: "Which?", options: [{ label: "A" }, { label: "B" }] }]);
+    m.route({ type: "abort", sessionKey: key } as any);
+    expect(await pending).toEqual([]);
+  });
 });

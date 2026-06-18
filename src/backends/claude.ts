@@ -1,7 +1,9 @@
-import { query as realQuery } from "@anthropic-ai/claude-agent-sdk";
+import { query as realQuery, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import { Pushable } from "../pushable.js";
 import { awaitSessionFile } from "../sessionFile.js";
+import { formatAnswers, type Question } from "../questions.js";
 import type { AgentBackend, AgentEvent, BackendStartOpts, ImageAttachment } from "./types.js";
 
 export type QueryFn = (params: {
@@ -13,6 +15,9 @@ export type QueryFn = (params: {
     permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
     settingSources?: ("user" | "project" | "local")[];
     includePartialMessages?: boolean;
+    appendSystemPrompt?: string;
+    disallowedTools?: string[];
+    mcpServers?: Record<string, unknown>;
     canUseTool?: (
       toolName: string,
       input: Record<string, unknown>,
@@ -24,6 +29,43 @@ export type QueryFn = (params: {
   setPermissionMode?: (m: string) => Promise<void>;
   interrupt?: () => Promise<void>;
 };
+
+const QUESTION_PROMPT =
+  "When you need the user to make a design or implementation decision between a few distinct options, " +
+  "call the `mcp__handsfree__ask_user_question` tool with the question(s) and 2-4 options each, instead of " +
+  "only asking in prose. The user picks on their phone and your tool result is their selection.";
+
+/** In-process MCP server exposing one tool: a multiple-choice question the user
+ *  answers on their phone. The handler awaits askUser and returns the selection. */
+function buildQuestionServer(askUser: (questions: Question[]) => Promise<string[]>) {
+  return createSdkMcpServer({
+    name: "handsfree",
+    tools: [
+      tool(
+        "ask_user_question",
+        "Ask the user a multiple-choice decision question and wait for their answer. Use whenever you need " +
+          "the user to choose between distinct design/implementation options (the AskUserQuestion equivalent here).",
+        {
+          questions: z.array(z.object({
+            question: z.string().describe("The full question, ending in a question mark."),
+            header: z.string().optional().describe("Very short label/chip, max 12 chars."),
+            options: z.array(z.object({
+              label: z.string().describe("Short choice text (1-5 words)."),
+              description: z.string().optional().describe("What this choice means or implies."),
+              preview: z.string().optional(),
+            })).min(2).max(4),
+            multiSelect: z.boolean().optional().describe("Allow selecting multiple options."),
+          })).min(1).max(4),
+        },
+        async (args) => {
+          const questions = args.questions as Question[];
+          const selections = await askUser(questions);
+          return { content: [{ type: "text" as const, text: formatAnswers(questions, selections) }] };
+        },
+      ),
+    ],
+  });
+}
 
 export interface ClaudeBackendDeps {
   queryFn?: QueryFn;
@@ -51,12 +93,21 @@ export class ClaudeBackend implements AgentBackend {
   async *start(opts: BackendStartOpts): AsyncGenerator<AgentEvent, void> {
     if (this.started) throw new Error("backend already started");
     this.started = true;
+    // When the bridge exposes askUser, register an in-process MCP tool the model
+    // can call to put a multiple-choice decision in front of the user (the SDK
+    // equivalent of the CLI's AskUserQuestion). The handler owns the tool result.
+    const questionServer = opts.askUser ? buildQuestionServer(opts.askUser) : null;
     const q = this.queryFn({
       prompt: this.prompts,
       options: {
         cwd: opts.projectPath,
         resume: opts.resume,
         ...(this.model ? { model: this.model } : {}),
+        ...(questionServer ? {
+          mcpServers: { handsfree: questionServer },
+          appendSystemPrompt: QUESTION_PROMPT,
+          disallowedTools: ["AskUserQuestion"],
+        } : {}),
         permissionMode: "default",
         // Bridge is the authoritative permission gate (Phase 1.5 spec §1): load
         // only project settings (keeps CLAUDE.md) and drop the user's global

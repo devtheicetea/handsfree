@@ -27,6 +27,16 @@ describe("Phase 3 tagged client messages", () => {
     expect(parseClientMessage(JSON.stringify({ type: "set_mode", sessionKey: "k1", mode: "safelist" })).ok).toBe(true);
     expect(parseClientMessage(JSON.stringify({ type: "permission_response", sessionKey: "k1", id: "x", decision: "allow" })).ok).toBe(true);
   });
+
+  it("parses question_response with selections", () => {
+    const r = parseClientMessage(JSON.stringify({ type: "question_response", sessionKey: "k1", id: "x", selections: ["A", "B,C"] }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value).toMatchObject({ type: "question_response", id: "x", selections: ["A", "B,C"] });
+  });
+
+  it("rejects question_response without selections", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "question_response", sessionKey: "k1", id: "x" })).ok).toBe(false);
+  });
 });
 
 describe("parseClientMessage", () => {

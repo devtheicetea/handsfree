@@ -1,4 +1,5 @@
 import type { PermissionResult } from "../permissions.js";
+import type { Question } from "../questions.js";
 
 export type AgentName = "claude" | "codex";
 
@@ -18,6 +19,9 @@ export interface BackendStartOpts {
   resume: string | undefined;
   /** The bridge's authoritative permission gate (PermissionPolicy.evaluate). */
   evaluate: (tool: string, input: Record<string, unknown>) => Promise<PermissionResult>;
+  /** Ask the user a multiple-choice decision question; resolves with their
+   *  selection(s). Backends that support it expose this as an SDK tool. */
+  askUser?: (questions: Question[]) => Promise<string[]>;
 }
 
 /**

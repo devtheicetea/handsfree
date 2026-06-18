@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { HistoryItem } from "./sessionHistory.js";
 import type { AgentName } from "./backends/types.js";
 import type { SessionMeta } from "./stores/types.js";
+import type { Question } from "./questions.js";
 
 export const agentSchema = z.enum(["claude", "codex"]).default("claude");
 
@@ -30,6 +31,12 @@ export const permissionResponseSchema = z.object({
   type: z.literal("permission_response"), sessionKey: z.string().min(1),
   id: z.string().min(1), decision: z.enum(["allow", "allow_session", "deny"]),
 });
+// The user's answer to an `ask_user_question` tool call: `selections[i]` answers
+// `questions[i]` (comma-joined for multi-select; freeform "Other" text passes through).
+export const questionResponseSchema = z.object({
+  type: z.literal("question_response"), sessionKey: z.string().min(1),
+  id: z.string().min(1), selections: z.array(z.string()),
+});
 export const setModeSchema = z.object({ type: z.literal("set_mode"), sessionKey: z.string().min(1), mode: z.enum(["safelist", "ask_all", "auto"]) });
 export const abortSchema = z.object({ type: z.literal("abort"), sessionKey: z.string().min(1) });
 // v0.4.0 mirroring: view = history snapshot + live watch (no bridge session).
@@ -51,6 +58,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   openSessionSchema,
   promptSchema,
   permissionResponseSchema,
+  questionResponseSchema,
   setModeSchema,
   abortSchema,
   viewSessionSchema,
@@ -83,6 +91,8 @@ export type BridgeToClient =
   | { type: "status"; sessionKey: string; state: "thinking" | "idle" | "error" }
   | { type: "response"; sessionKey: string; turn: number; text: string; done: boolean }
   | { type: "permission_request"; sessionKey: string; id: string; tool: string; input: unknown; detail: string }
+  | { type: "question_request"; sessionKey: string; id: string; questions: Question[] }
+  | { type: "question_resolved"; sessionKey: string; id: string }
   | { type: "user_message"; sessionKey: string; turn: number; text: string; attachments?: { mime: string; dataBase64: string }[]; origin: string }
   | { type: "permission_resolved"; sessionKey: string; id: string }
   | { type: "history"; sessionKey: string; items: HistoryItem[] }

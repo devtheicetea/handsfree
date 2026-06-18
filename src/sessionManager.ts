@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Session } from "./session.js";
 import { PermissionPolicy, type AskRequest } from "./permissions.js";
+import { QuestionRegistry, type QuestionRequest } from "./questions.js";
 import { ClaudeBackend } from "./backends/claude.js";
 import { CodexBackend } from "./backends/codex.js";
 import type { AgentName } from "./backends/types.js";
@@ -15,6 +16,7 @@ const HISTORY_LIMIT = 25;
 interface LiveSession {
   session: Session;
   policy: PermissionPolicy;
+  questions: QuestionRegistry;
   projectPath: string;
   agent: AgentName;
   resumeId: string | null;
@@ -66,10 +68,18 @@ export class SessionManager {
     } as BridgeToClient;
   }
 
-  /** Re-send any still-pending permission requests to a (re)connected client. */
+  /** Build a question_request message from a pending ask (sessionKey added by `tagged`). */
+  private questionRequestMsg(req: QuestionRequest): BridgeToClient {
+    return { type: "question_request", id: req.id, questions: req.questions } as BridgeToClient;
+  }
+
+  /** Re-send any still-pending permission + question requests to a (re)connected client. */
   private replayPending(key: string, ls: LiveSession, emit: (m: BridgeToClient) => void): void {
     for (const req of ls.policy.pendingRequests()) {
       this.tagged(key, emit)(this.permissionRequestMsg(req));
+    }
+    for (const req of ls.questions.pendingRequests()) {
+      this.tagged(key, emit)(this.questionRequestMsg(req));
     }
   }
 
@@ -106,11 +116,22 @@ export class SessionManager {
       },
       (id) => this.broadcast({ type: "permission_resolved", sessionKey, id }),
     );
+    const questions = new QuestionRegistry(
+      (req) => {
+        debugLog("agent.question", { folder: projectPath, session: this.sessions.get(sessionKey)?.session.backendSessionId ?? "", id: req.id, count: req.questions.length });
+        this.tagged(sessionKey, this.broadcast)(this.questionRequestMsg(req));
+      },
+      (id) => this.broadcast({ type: "question_resolved", sessionKey, id }),
+    );
     const session = this.makeSession(agent, projectPath);
-    this.sessions.set(sessionKey, { session, policy, projectPath, agent, resumeId });
+    this.sessions.set(sessionKey, { session, policy, questions, projectPath, agent, resumeId });
     toOpener({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
     this.tagged(sessionKey, toOpener)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
-    await session.start({ projectPath, resume: resumeId ?? undefined, policy, emit: this.tagged(sessionKey, this.broadcast) });
+    await session.start({
+      projectPath, resume: resumeId ?? undefined, policy,
+      askUser: (qs) => questions.ask(qs),
+      emit: this.tagged(sessionKey, this.broadcast),
+    });
     return sessionKey;
   }
 
@@ -176,9 +197,10 @@ export class SessionManager {
                          text: msg.text, attachments: msg.attachments, origin: origin ?? "" });
         ls.session.prompt(msg.text, msg.attachments);
         return true;
-      case "abort": ls.session.abortTurn(); ls.policy.abortAll(); return true;
+      case "abort": ls.session.abortTurn(); ls.policy.abortAll(); ls.questions.abortAll(); return true;
       case "set_mode": ls.policy.setMode(msg.mode); return true;
       case "permission_response": ls.policy.resolve(msg.id, msg.decision); return true;
+      case "question_response": ls.questions.resolve(msg.id, msg.selections); return true;
       default: return false;
     }
   }
