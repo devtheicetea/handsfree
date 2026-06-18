@@ -75,7 +75,8 @@ flowchart LR
 - 已安装并登录的编程智能体：
   - **Claude Code**，使用 Claude Pro/Max 订阅登录。请保持 `ANTHROPIC_API_KEY`
     **未设置**，这样它会走你的订阅，而不是按量计费的 API。
-  - 以及/或 **OpenAI Codex**（见下方 [Codex 设置](#codex-设置)）。可选。
+  - 以及/或 **OpenAI Codex** — 安装 Codex CLI（`npm i -g @openai/codex` 或
+    `brew install codex`）并运行 `codex login`。可选。
 - *（可选，用于远程访问）* 在电脑和手机上都安装 [Tailscale](https://tailscale.com)，
   并登录同一账户。
 
@@ -141,20 +142,6 @@ npm start
 桥接服务始终是关卡：提示会流式发送到已连接的客户端，智能体会等待
 允许 / 本次会话允许 / 拒绝 的回答。
 
-## 智能体
-
-客户端在 `open_session` 时通过 `agent: "claude" | "codex"` 选择智能体
-（默认 `"claude"`）。Claude 与 Codex 会话并行运行——每个 `(项目, 智能体)` 一个实时会话。
-
-### Codex 设置
-
-- 安装 Codex CLI（`npm i -g @openai/codex` 或 `brew install codex`）并登录
-  （`codex login`）。桥接服务从 `PATH` 解析 `codex`；可用 `HANDSFREE_CODEX_PATH=/path/to/codex` 覆盖。
-- Codex 在沙箱中运行（workspace-write），按需请求批准；桥接服务仍是权限关卡。
-  命令始终询问（`CodexExec`）；项目内的文件改动在 safelist 模式下自动允许
-  （`CodexApplyPatch`），项目外则询问（`CodexApplyPatchOutside`）。
-- Codex 会话从 `~/.codex/sessions` 发现、恢复和回放。
-
 ## 会话与并发
 
 桥接服务遵循 Claude Code / Agent SDK 的根本原则：**同一时刻只能有一个实时进程
@@ -178,25 +165,6 @@ npm start
 - 除了可选的 `HANDSFREE_TOKEN`，桥接服务没有其他鉴权。不要把它暴露到公网。
   绑定到 localhost/局域网，或使用 **Tailscale**，让只有你自己的设备能访问它。
 - 智能体以你的本地权限在所选项目目录中运行。请据此选择权限模式。
-
-## 测试
-
-```bash
-npm test                          # 单元测试
-HANDSFREE_E2E=1 npm test          # 同时运行真实的 Agent SDK 文本回路测试（需登录 Claude）
-npm run typecheck                 # 仅类型检查，不产出文件
-```
-
-## 手动文本回路客户端
-
-一个无需 App 即可调试桥接服务的终端客户端。在桥接服务运行时，于另一个终端：
-
-```bash
-node test/client.ts               # Node 22.6+（内置 TS）。否则：npx tsx test/client.ts
-```
-
-然后：选择一个项目 → 输入提示 → 观察流式文本 → 回答权限提示。
-命令：`/auto`、`/ask`、`/abort`、`/quit`。
 
 ## 许可证
 

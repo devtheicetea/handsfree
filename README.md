@@ -80,7 +80,8 @@ the bridge is the single writer (see [Sessions & concurrency](#sessions--concurr
   - **Claude Code**, logged in with a Claude Pro/Max subscription. Keep
     `ANTHROPIC_API_KEY` **unset** so it runs on your subscription rather than
     pay-as-you-go API billing.
-  - and/or **OpenAI Codex** (see [Codex setup](#codex-setup) below). Optional.
+  - and/or **OpenAI Codex** — install the Codex CLI (`npm i -g @openai/codex` or
+    `brew install codex`) and run `codex login`. Optional.
 - *(Optional, for remote access)* [Tailscale](https://tailscale.com) on both the
   computer and the phone, signed in to the same account.
 
@@ -154,23 +155,6 @@ from the phone:
 The bridge is always the gate: prompts stream to the connected client(s) and the
 agent waits for an Allow / Allow-for-session / Deny answer.
 
-## Agents
-
-Clients pick the agent per `open_session` with `agent: "claude" | "codex"`
-(defaults to `"claude"`). Claude and Codex sessions run side by side — one live
-session per `(project, agent)`.
-
-### Codex setup
-
-- Install the Codex CLI (`npm i -g @openai/codex` or `brew install codex`) and
-  log in (`codex login`). The bridge resolves `codex` from `PATH`; override with
-  `HANDSFREE_CODEX_PATH=/path/to/codex`.
-- Codex runs sandboxed (workspace-write) with approvals on request; the bridge
-  remains the permission gate. Commands always ask (`CodexExec`); file changes
-  inside the project auto-allow in safelist mode (`CodexApplyPatch`), outside the
-  project ask (`CodexApplyPatchOutside`).
-- Codex sessions are discovered, resumed, and replayed from `~/.codex/sessions`.
-
 ## Sessions & concurrency
 
 The bridge assumes the cardinal rule of Claude Code / the Agent SDK: **exactly
@@ -202,26 +186,6 @@ the bridge's fan-out; *the bridge and a native resume co-driving one id* is not.
   own devices can reach it.
 - The agent runs with your local permissions in the chosen project directory.
   Pick your permission mode accordingly.
-
-## Tests
-
-```bash
-npm test                          # unit tests
-HANDSFREE_E2E=1 npm test          # also runs the real Agent SDK text-loop (needs Claude login)
-npm run typecheck                 # type-check without emitting
-```
-
-## Manual text-loop client
-
-A terminal client for poking the bridge without the app. With the bridge
-running, in another terminal:
-
-```bash
-node test/client.ts               # Node 22.6+ (built-in TS). Otherwise: npx tsx test/client.ts
-```
-
-Then: pick a project → type a prompt → watch streamed text → answer permission
-prompts. Commands: `/auto`, `/ask`, `/abort`, `/quit`.
 
 ## License
 
