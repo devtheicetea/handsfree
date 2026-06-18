@@ -226,6 +226,12 @@ export class SessionManager {
     return this.sessions.get(sessionKey)?.session.isActive() ?? false;
   }
 
+  /** The durably-saved permission mode for an on-disk session, if any — so a mirror
+   *  (no live session/policy yet) can still show the mode that will be enforced. */
+  savedMode(agent: AgentName, sessionId: string) {
+    return this.modeStore.get(agent, sessionId);
+  }
+
   /** Folder + session id for a sessionKey — used to tag broadcast debug logs. */
   describe(sessionKey: string): { folder: string; session: string } {
     const ls = this.sessions.get(sessionKey);

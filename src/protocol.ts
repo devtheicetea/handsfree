@@ -97,7 +97,7 @@ export type BridgeToClient =
   | { type: "permission_resolved"; sessionKey: string; id: string }
   | { type: "history"; sessionKey: string; items: HistoryItem[] }
   // v0.4.0 mirroring (no sessionKey — these address sessions by (agent, sessionId)):
-  | { type: "session_history"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[] }
+  | { type: "session_history"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[]; mode?: PermissionModeName }
   | { type: "external_turns"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[] }
   | { type: "session_activity"; projectPath: string; agent: AgentName; sessionId: string; lastActive: number; preview: HistoryItem | null }
   | { type: "error"; sessionKey?: string; code: string; message: string };

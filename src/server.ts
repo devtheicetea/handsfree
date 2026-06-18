@@ -230,7 +230,10 @@ export class BridgeServer {
         }
         this.clients.subscribeMirror(ws, `${msg.agent}:${msg.sessionId}`);
         const items = this.stores[msg.agent].history(msg.projectPath, msg.sessionId, HISTORY_LIMIT);
-        this.send(ws, { type: "session_history", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items });
+        // Carry the session's saved permission mode so the picker shows what will be
+        // enforced once the mirror forks live — not a stale safelist default.
+        const mode = this.sessions.savedMode(msg.agent, msg.sessionId);
+        this.send(ws, { type: "session_history", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items, mode });
         return;
       }
       case "unview_session":
