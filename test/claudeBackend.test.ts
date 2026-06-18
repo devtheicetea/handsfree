@@ -134,6 +134,27 @@ describe("ClaudeBackend", () => {
     await b.stop();
   });
 
+  it("auto-allows the ask_user_question tool without consulting evaluate", async () => {
+    let captured: any; const calls: string[] = [];
+    const queryFn: QueryFn = ({ options }) => {
+      captured = options;
+      async function* gen() { yield { type: "system", subtype: "init", session_id: "s", tools: [] } as any; }
+      const g = gen() as any; g.setPermissionMode = async () => {}; return g;
+    };
+    const b = new ClaudeBackend({ queryFn, waitForSessionFile: async () => {} });
+    const iter = b.start({
+      projectPath: "/x", resume: undefined,
+      evaluate: async (tool) => { calls.push(tool); return { behavior: "deny", message: "no" }; },
+      askUser: async () => ["A"],
+    });
+    await collect(iter, (e) => e.length >= 1);
+    const ctx = { signal: new AbortController().signal, toolUseID: "t" };
+    const r = await captured.canUseTool("mcp__handsfree__ask_user_question", { questions: [] }, ctx);
+    expect(r).toEqual({ behavior: "allow", updatedInput: { questions: [] } });
+    expect(calls).not.toContain("mcp__handsfree__ask_user_question");   // never hit the permission gate
+    await b.stop();
+  });
+
   it("passes the configured model to the query (and omits it when unset)", async () => {
     let withModel: any, withoutModel: any;
     const capture = (sink: (o: any) => void): QueryFn => ({ options }) => {

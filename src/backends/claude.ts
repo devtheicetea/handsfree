@@ -30,19 +30,24 @@ export type QueryFn = (params: {
   interrupt?: () => Promise<void>;
 };
 
+/** MCP server + tool names, joined into the fully-qualified id the SDK exposes. */
+const QUESTION_SERVER = "handsfree";
+const QUESTION_TOOL = "ask_user_question";
+const QUESTION_TOOL_NAME = `mcp__${QUESTION_SERVER}__${QUESTION_TOOL}`;
+
 const QUESTION_PROMPT =
   "When you need the user to make a design or implementation decision between a few distinct options, " +
-  "call the `mcp__handsfree__ask_user_question` tool with the question(s) and 2-4 options each, instead of " +
+  "call the `" + QUESTION_TOOL_NAME + "` tool with the question(s) and 2-4 options each, instead of " +
   "only asking in prose. The user picks on their phone and your tool result is their selection.";
 
 /** In-process MCP server exposing one tool: a multiple-choice question the user
  *  answers on their phone. The handler awaits askUser and returns the selection. */
 function buildQuestionServer(askUser: (questions: Question[]) => Promise<string[]>) {
   return createSdkMcpServer({
-    name: "handsfree",
+    name: QUESTION_SERVER,
     tools: [
       tool(
-        "ask_user_question",
+        QUESTION_TOOL,
         "Ask the user a multiple-choice decision question and wait for their answer. Use whenever you need " +
           "the user to choose between distinct design/implementation options (the AskUserQuestion equivalent here).",
         {
@@ -104,7 +109,7 @@ export class ClaudeBackend implements AgentBackend {
         resume: opts.resume,
         ...(this.model ? { model: this.model } : {}),
         ...(questionServer ? {
-          mcpServers: { handsfree: questionServer },
+          mcpServers: { [QUESTION_SERVER]: questionServer },
           appendSystemPrompt: QUESTION_PROMPT,
           disallowedTools: ["AskUserQuestion"],
         } : {}),
@@ -116,6 +121,9 @@ export class ClaudeBackend implements AgentBackend {
         includePartialMessages: true,
         abortController: this.abort,
         canUseTool: async (toolName, input) => {
+          // Our own question tool IS the user interaction — never gate it behind a
+          // separate "run this tool?" permission, or the user gets two prompts.
+          if (toolName === QUESTION_TOOL_NAME) return { behavior: "allow", updatedInput: input };
           // The Agent SDK requires an `allow` result to carry `updatedInput`;
           // echo the (unchanged) input back so allowed tools don't fail schema
           // validation. Deny results pass through untouched.
