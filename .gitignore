@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 
 # macOS
 .DS_Store
+
+# Internal design/planning docs — local only, not published
+docs/superpowers/

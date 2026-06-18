@@ -41,8 +41,8 @@ describe("parseCodexHistory", () => {
     expect(parseCodexHistory("", 5)).toEqual([]);
   });
 
-  it("parses a REAL captured rollout file (canary for format drift)", () => {
-    const text = readFileSync(new URL("./fixtures/codex/rollout-real.jsonl", import.meta.url), "utf8");
+  it("parses a captured rollout file (canary for format drift)", () => {
+    const text = readFileSync(new URL("./fixtures/codex/rollout-sample.jsonl", import.meta.url), "utf8");
     const items = parseCodexHistory(text, 25);
     expect(items.length).toBeGreaterThan(0);
     expect(items.some((i) => i.role === "assistant" && i.text.length > 0)).toBe(true);
