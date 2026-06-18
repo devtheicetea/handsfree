@@ -123,7 +123,10 @@ export class ClaudeBackend implements AgentBackend {
         canUseTool: async (toolName, input) => {
           // Our own question tool IS the user interaction — never gate it behind a
           // separate "run this tool?" permission, or the user gets two prompts.
-          if (toolName === QUESTION_TOOL_NAME) return { behavior: "allow", updatedInput: input };
+          // Match the basename too, defensively, in case the server prefix shifts.
+          if (toolName === QUESTION_TOOL_NAME || toolName.endsWith(`__${QUESTION_TOOL}`)) {
+            return { behavior: "allow", updatedInput: input };
+          }
           // The Agent SDK requires an `allow` result to carry `updatedInput`;
           // echo the (unchanged) input back so allowed tools don't fail schema
           // validation. Deny results pass through untouched.
