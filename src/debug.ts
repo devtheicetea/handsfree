@@ -1,11 +1,17 @@
+/** True when the bridge is running in debug mode (`HANDSFREE_ENV=debug`). The master
+ *  switch for all debug behaviors; off (prod) by default keeps the console quiet. */
+export function isDebug(): boolean {
+  return process.env.HANDSFREE_ENV?.trim().toLowerCase() === "debug";
+}
+
 /**
  * Lightweight stdout debug logging for the live message flow. Every line carries the
  * session FOLDER (project path) and SESSION ID so you can follow one session across
  * prompts, agent output, permissions, and broadcasts in the Node terminal.
- * On by default; set HANDSFREE_DEBUG=0 to silence.
+ * Off by default; set `HANDSFREE_ENV=debug` to enable.
  */
 export function debugLog(event: string, fields: Record<string, unknown>): void {
-  if (process.env.HANDSFREE_DEBUG === "0") return;
+  if (!isDebug()) return;
   const parts = Object.entries(fields)
     .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
     .join(" ");

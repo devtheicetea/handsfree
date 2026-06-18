@@ -8,6 +8,14 @@ describe("loadConfig", () => {
     expect(c.bindAddress).toBe("0.0.0.0");
     expect(c.token).toBeNull();
     expect(c.safelist).toEqual(DEFAULT_SAFELIST);
+    expect(c.env).toBe("prod");
+  });
+
+  it("parses HANDSFREE_ENV (debug opt-in, anything else prod)", () => {
+    expect(loadConfig({ HANDSFREE_ENV: "debug" }).env).toBe("debug");
+    expect(loadConfig({ HANDSFREE_ENV: "DEBUG" }).env).toBe("debug");
+    expect(loadConfig({ HANDSFREE_ENV: "prod" }).env).toBe("prod");
+    expect(loadConfig({ HANDSFREE_ENV: "whatever" }).env).toBe("prod");
   });
 
   it("reads overrides from env", () => {

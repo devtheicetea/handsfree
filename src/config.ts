@@ -9,6 +9,9 @@ export interface Config {
   codexPath: string | null;
   /** Model for Claude sessions (e.g. "sonnet"/"opus" or a full id); null = SDK default. */
   model?: string | null;
+  /** Run mode. "prod" (default) keeps the console quiet; "debug" turns on the
+   *  verbose per-message debug logging. The master switch for debug behaviors. */
+  env: "prod" | "debug";
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -26,5 +29,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     safelist,
     codexPath: env.HANDSFREE_CODEX_PATH?.trim() || null,
     model: env.HANDSFREE_MODEL?.trim() || null,
+    env: env.HANDSFREE_ENV?.trim().toLowerCase() === "debug" ? "debug" : "prod",
   };
 }

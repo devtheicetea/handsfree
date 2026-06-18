@@ -130,6 +130,7 @@ npm start
 | `HANDSFREE_SAFELIST` | `Read,Grep,Glob,LS,TodoWrite,CodexApplyPatch` | 在 `safelist` 权限模式下自动批准的工具，逗号分隔。 |
 | `HANDSFREE_MODEL` | _（SDK 默认）_ | Claude 会话使用的模型（如 `sonnet`、`opus`，或完整模型 id）。 |
 | `HANDSFREE_CODEX_PATH` | 从 `PATH` 解析 | `codex` 可执行文件的完整路径。 |
+| `HANDSFREE_ENV` | `prod` | 运行模式。`debug` 开启每条消息的详细控制台日志；`prod` 保持控制台安静。 |
 
 ## 权限
 

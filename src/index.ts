@@ -10,7 +10,8 @@ async function main(): Promise<void> {
   const logger = createLogger(join(tmpdir(), "handsfree-bridge.log"));
   const server = new BridgeServer({ config, logger });
   const port = await server.listen();
-  logger.info("bridge listening", { port, bind: config.bindAddress });
+  logger.info("bridge listening", { port, bind: config.bindAddress, env: config.env });
+  if (config.env === "debug") console.log("[hf] debug mode on (HANDSFREE_ENV=debug) — verbose logging enabled");
   printPairing(config);
 
   const shutdown = async () => {

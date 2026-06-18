@@ -142,6 +142,7 @@ All configuration is via environment variables:
 | `HANDSFREE_SAFELIST` | `Read,Grep,Glob,LS,TodoWrite,CodexApplyPatch` | Comma-separated tools auto-approved in `safelist` permission mode. |
 | `HANDSFREE_MODEL` | _(SDK default)_ | Model for Claude sessions (e.g. `sonnet`, `opus`, or a full model id). |
 | `HANDSFREE_CODEX_PATH` | resolve from `PATH` | Full path to the `codex` binary. |
+| `HANDSFREE_ENV` | `prod` | Run mode. `debug` turns on verbose per-message console logging; `prod` keeps the console quiet. |
 
 ## Permissions
 
