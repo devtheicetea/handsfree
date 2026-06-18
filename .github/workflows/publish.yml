@@ -1,0 +1,39 @@
+name: Publish to npm
+
+# Publishes the package whenever a version tag (v*) is pushed. Cut a release with:
+#   npm version patch   # bumps package.json + commits + creates the matching tag
+#   git push --follow-tags
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Tag must match package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG  package.json=$PKG"
+          test "$TAG" = "$PKG" || { echo "::error::tag $GITHUB_REF_NAME does not match package.json version $PKG"; exit 1; }
+
+      - run: npm test
+
+      # prepublishOnly rebuilds dist/. --provenance needs id-token + a public repo.
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
