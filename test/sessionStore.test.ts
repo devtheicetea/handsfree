@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { titleFrom, listSessionsFor, deleteClaudeSession } from "../src/projects.js";
@@ -67,6 +67,10 @@ describe("listSessionsFor", () => {
     writeFileSync(join(dir, "s2.jsonl"), [
       line({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "second session prompt" } }),
     ].join("\n") + "\n");
+    // Pin distinct mtimes so "newest first" is deterministic — on fast CI
+    // filesystems both writes can land in the same coarse mtime tick otherwise.
+    utimesSync(join(dir, "s1.jsonl"), new Date(1_000), new Date(1_000));
+    utimesSync(join(dir, "s2.jsonl"), new Date(2_000), new Date(2_000));
     const sessions = listSessionsFor(home, "/Users/me/app");
     expect(sessions.map((s) => s.sessionId)).toEqual(["s2", "s1"]);
     const s1 = sessions.find((s) => s.sessionId === "s1")!;

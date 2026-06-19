@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listClaudeProjects, resolveResume, historyForProject } from "../src/projects.js";
@@ -19,6 +19,10 @@ beforeEach(() => {
     join(projDir, "bbbb-2222.jsonl"),
     JSON.stringify({ cwd: "/Users/me/app", sessionId: "bbbb-2222" }) + "\n",
   );
+  // Pin distinct mtimes so "newest first" is deterministic — on fast CI
+  // filesystems both writes can land in the same coarse mtime tick otherwise.
+  utimesSync(join(projDir, "aaaa-1111.jsonl"), new Date(1_000), new Date(1_000));
+  utimesSync(join(projDir, "bbbb-2222.jsonl"), new Date(2_000), new Date(2_000));
 });
 
 afterEach(() => rmSync(claudeHome, { recursive: true, force: true }));
@@ -113,6 +117,10 @@ describe("historyForProject specific-session-id branch", () => {
       JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "from-s2" } }),
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "reply-s2" }] } }),
     ].join("\n") + "\n");
+    // Pin distinct mtimes so the newest-session fallback is deterministic on
+    // fast CI filesystems (both writes can otherwise share one mtime tick).
+    utimesSync(join(dir, "s1.jsonl"), new Date(1_000), new Date(1_000));
+    utimesSync(join(dir, "s2.jsonl"), new Date(2_000), new Date(2_000));
 
     // s2 was written last so it has a later mtime — it is the "newest" session.
     // Requesting s1 explicitly should return s1's turns, not s2's.
