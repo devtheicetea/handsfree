@@ -33,11 +33,42 @@ export function lanIP(): string | null {
   return null;
 }
 
+/** Where the advertised host came from — drives the human-readable reachability note. */
+export type HostSource = "override" | "tailscale" | "lan" | "localhost";
+
+export interface ResolvedHost {
+  host: string;
+  source: HostSource;
+}
+
+/** Decide which host to advertise + where it came from: env override → Tailscale → LAN → localhost. */
+export function resolveHostInfo(env: NodeJS.ProcessEnv, deps: HostDeps): ResolvedHost {
+  const override = env.HANDSFREE_HOST?.trim();
+  if (override) return { host: override, source: "override" };
+  const ts = deps.tailscaleIP();
+  if (ts) return { host: ts, source: "tailscale" };
+  const lan = deps.lanIP();
+  if (lan) return { host: lan, source: "lan" };
+  return { host: "localhost", source: "localhost" };
+}
+
 /** Decide which host to advertise: env override → Tailscale → LAN → localhost. */
 export function resolveHost(env: NodeJS.ProcessEnv, deps: HostDeps): string {
-  const override = env.HANDSFREE_HOST?.trim();
-  if (override) return override;
-  return deps.tailscaleIP() ?? deps.lanIP() ?? "localhost";
+  return resolveHostInfo(env, deps).host;
+}
+
+/** One-line note telling the user whether the bridge is reachable remotely or only on the LAN. */
+export function reachabilityNote(r: ResolvedHost): string {
+  switch (r.source) {
+    case "tailscale":
+      return `Connecting over Tailscale (${r.host}) — works remotely, from any network.`;
+    case "lan":
+      return `Connecting over your local network (${r.host}) — phone must be on the same Wi-Fi. For remote access, set up Tailscale: https://tailscale.com/download`;
+    case "override":
+      return `Connecting to ${r.host} (from HANDSFREE_HOST).`;
+    case "localhost":
+      return `No network address found — only reachable on this machine. Join a Wi-Fi or set up Tailscale (https://tailscale.com/download) to connect your phone.`;
+  }
 }
 
 /** The `handsfree://connect?...` deep link the QR encodes. Token only when set. */
@@ -57,8 +88,9 @@ export function printPairing(
   out: (s: string) => void = (s) => process.stdout.write(s),
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const host = resolveHost(env, deps);
-  const url = buildPairURL(host, config.port, config.token);
+  const resolved = resolveHostInfo(env, deps);
+  const url = buildPairURL(resolved.host, config.port, config.token);
+  out(`\n${reachabilityNote(resolved)}\n`);
   out(`\nScan to connect Handsfree (or open this URL on the phone):\n${url}\n`);
   qrcode.generate(url, { small: true }, (qr) => out("\n" + qr + "\n"));
 }
