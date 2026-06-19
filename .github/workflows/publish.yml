@@ -36,6 +36,20 @@ jobs:
 
       - run: npm test
 
+      # Idempotent: if this version is already on the registry, skip publishing
+      # (e.g. a tag re-created for consistency) instead of failing on a duplicate.
+      - name: Check if version already published
+        id: published
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          if npm view "handsfree-bridge@$PKG" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "handsfree-bridge@$PKG already on npm — skipping publish"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # No NODE_AUTH_TOKEN: npm authenticates via the OIDC id-token (Trusted
       # Publishing). prepublishOnly rebuilds dist/; provenance is attached automatically.
       - run: npm publish --access public
+        if: steps.published.outputs.exists == 'false'
