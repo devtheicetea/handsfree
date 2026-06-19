@@ -89,7 +89,24 @@ the bridge is the single writer (see [Sessions & concurrency](#sessions--concurr
 
 Three quick steps — the same ones the app walks you through.
 
-### 1. Start the bridge
+### 1. Get on the same network
+
+Your phone and the computer running your coding agent need to reach each other.
+Do this first — the bridge picks the right address when it starts.
+
+- **On the same Wi-Fi** — if your phone and computer share a network, there's
+  nothing to set up.
+- **Away / remote** — install [Tailscale](https://tailscale.com/download) on both
+  the computer and the phone and sign in to the same account. The bridge then
+  advertises your Tailscale address automatically and the phone reaches it from
+  anywhere — no port forwarding. Leave the default `HANDSFREE_BIND=0.0.0.0`, or
+  set it to your Tailscale IP to refuse all other interfaces.
+
+The advertised host is chosen automatically: your **Tailscale** IP if available,
+otherwise your **LAN** IP, otherwise `localhost`. Override it with
+`HANDSFREE_HOST` (see [Configuration](#configuration)).
+
+### 2. Start the bridge
 
 On the computer where your coding agent runs, start the bridge and leave it
 running:
@@ -113,21 +130,7 @@ npm start
 ```
 </details>
 
-### 2. Connect your phone
-
-- **On the same Wi-Fi** — if your phone and computer share a network, there's
-  nothing to set up.
-- **Away / remote** — install [Tailscale](https://tailscale.com) on both the
-  computer and the phone and sign in to the same account. The bridge then
-  advertises your Tailscale address automatically and the phone reaches it from
-  anywhere — no port forwarding. Leave the default `HANDSFREE_BIND=0.0.0.0`, or
-  set it to your Tailscale IP to refuse all other interfaces.
-
-The advertised host is chosen automatically: your **Tailscale** IP if available,
-otherwise your **LAN** IP, otherwise `localhost`. Override it with
-`HANDSFREE_HOST` (see [Configuration](#configuration)).
-
-### 3. Pair the app
+### 3. Connect to the bridge
 
 On start, the bridge prints a **pairing QR code** and a `handsfree://connect?…`
 URL in its terminal, with the host and port (default **8744**) beneath it. In the
