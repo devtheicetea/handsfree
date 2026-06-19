@@ -239,7 +239,7 @@ export class SessionManager {
   }
 
   /** True if a LIVE bridge session is writing this (agent, sessionId) — its file
-   *  appends are our own output, not external laptop activity. */
+   *  appends are our own output, not external activity (e.g. a terminal running the agent). */
   ownsSession(agent: AgentName, sessionId: string): boolean {
     for (const ls of this.sessions.values()) {
       if (ls.agent !== agent || !ls.session.isActive()) continue;

@@ -11,7 +11,7 @@ export interface HostDeps {
 // Validate octet ranges (0-255), so `tailscale ip -4` garbage like "999.999.999.999" is rejected.
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
-/** The Mac's Tailscale IPv4 (`tailscale ip -4`), or null if Tailscale isn't available. */
+/** The host's Tailscale IPv4 (`tailscale ip -4`), or null if Tailscale isn't available. */
 export function tailscaleIP(): string | null {
   try {
     const out = execFileSync("tailscale", ["ip", "-4"], { encoding: "utf8", timeout: 2000 });

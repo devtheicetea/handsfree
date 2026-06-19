@@ -68,7 +68,7 @@ export class BridgeServer {
     });
   }
 
-  /** Route laptop-side file activity: full turns to subscribers of the mirror,
+  /** Route host-side file activity: full turns to subscribers of the mirror,
    *  and a lightweight activity ping for list freshness always. */
   private onWatcherEvent(e: WatcherEvent): void {
     const mirrorId = `${e.agent}:${e.sessionId}`;
