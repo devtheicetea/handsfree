@@ -1,6 +1,6 @@
 {
   "name": "handsfree-bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Self-hosted backend for the Handsfree iOS app — talk to Claude Code or Codex hands-free from your phone.",
   "type": "module",
   "license": "MIT",
