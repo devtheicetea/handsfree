@@ -96,6 +96,29 @@ flowchart LR
 对外公布的主机会自动选择：优先 **Tailscale** IP，其次 **局域网** IP，最后 `localhost`。
 可通过 `HANDSFREE_HOST` 覆盖（见 [配置](#配置)）。
 
+<details>
+<summary>已经在用 VPN 访问 Claude / Codex？（分流 / Split Tunnel）</summary>
+
+如果你的电脑需要 VPN 才能访问智能体的 API，那么这个 VPN 和 Tailscale 都会
+管理路由、可能互相冲突——全局（full‑tunnel）VPN 会让 Tailscale 失效，手机就连不上桥接服务。
+让两者共存有两种办法：
+
+- **手机从不直接访问智能体，只访问桥接服务。** 所以手机只需要 Tailscale（或同一 Wi‑Fi），
+  *不需要* 你的 Claude/Codex VPN。在同一 Wi‑Fi 下，手机完全不需要 VPN。
+- **在电脑上对*另一个* VPN 做分流**，让 Tailscale 的流量绕过它。Tailscale 使用 CGNAT
+  网段 `100.64.0.0/10` 和 `fd7a:115c:a1e0::/48`；把这些网段从你的 VPN 中排除（或在
+  “仅包含”式分流里，只让智能体的 API 地址走 VPN）。这正是 Tailscale 官方的建议——见其
+  [其他 VPN 常见问题](https://tailscale.com/docs/reference/faq/other-vpns)。
+
+或者干脆不用系统级 VPN，只把**桥接服务的出站 API 请求**走代理：Claude CLI 和 Codex 都遵循
+`HTTPS_PROXY` / `ALL_PROXY`，因此 `HTTPS_PROXY=… npx handsfree-bridge` 只会代理智能体流量，
+而不影响 Tailscale。
+
+注意：如果另一个 VPN 是无法排除路由的全局（exit‑node 式）隧道，或它本身也使用
+`100.64.0.0/10` 网段（与 Tailscale 直接冲突），以上方法就行不通。
+
+</details>
+
 ### 2. 启动桥接服务
 
 在运行你编程智能体的电脑上，启动桥接服务并让它保持运行：

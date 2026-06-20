@@ -106,6 +106,34 @@ The advertised host is chosen automatically: your **Tailscale** IP if available,
 otherwise your **LAN** IP, otherwise `localhost`. Override it with
 `HANDSFREE_HOST` (see [Configuration](#configuration)).
 
+<details>
+<summary>Already using a VPN to reach Claude / Codex? (split tunneling)</summary>
+
+If your computer needs a VPN to reach your coding agent's API, that VPN and
+Tailscale both manage routing and can fight each other — a full‑tunnel VPN can
+starve Tailscale so the phone can't reach the bridge. Two things make them
+coexist:
+
+- **Your phone never talks to the agent — only to the bridge.** So the phone
+  only needs Tailscale (or the same Wi‑Fi), *not* your Claude/Codex VPN. On the
+  same Wi‑Fi the phone needs no VPN at all.
+- **Split‑tunnel the *other* VPN on the computer** so Tailscale's traffic skips
+  it. Tailscale uses the CGNAT ranges `100.64.0.0/10` and `fd7a:115c:a1e0::/48`;
+  exclude those from your VPN (or, on an inclusive split tunnel, route only your
+  agent's API endpoints through the VPN). This is what Tailscale officially
+  recommends — see their [other‑VPNs FAQ](https://tailscale.com/docs/reference/faq/other-vpns).
+
+Alternatively, skip the system VPN entirely and send **only the bridge's
+outbound API calls** through a proxy: the Claude CLI and Codex honor
+`HTTPS_PROXY` / `ALL_PROXY`, so `HTTPS_PROXY=… npx handsfree-bridge` tunnels the
+agent traffic while leaving Tailscale untouched.
+
+Caveats: this can't work if the other VPN is an exit‑node‑style full tunnel that
+won't let you exclude routes, or if it itself uses the `100.64.0.0/10` range
+(a direct conflict with Tailscale).
+
+</details>
+
 ### 2. Start the bridge
 
 On the computer where your coding agent runs, start the bridge and leave it
