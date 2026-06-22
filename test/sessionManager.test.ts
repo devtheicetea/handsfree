@@ -91,6 +91,29 @@ describe("SessionManager", () => {
     expect(made[1]!.aborts).toBe(1);
   });
 
+  it("emits a user-side interrupt marker on abort while a turn is in flight", async () => {
+    const { m, made, broadcast } = mgr();
+    let key = "";
+    await m.open("/a", "claude", "new", "n1", (x) => { if (x.type === "session_started") key = (x as { sessionKey: string }).sessionKey; });
+    made[0]!.streaming = true;   // a turn is in flight
+    m.route({ type: "abort", sessionKey: key } as any);
+    const marker = broadcast.find((x) => x.type === "user_message" && (x as { text: string }).text.includes("[Request interrupted by user]"));
+    expect(marker).toBeDefined();
+    expect((marker as { sessionKey: string }).sessionKey).toBe(key);
+    expect((marker as { origin: string }).origin).toBe("");   // every client shows it, incl. the aborter
+    expect(made[0]!.aborts).toBe(1);
+  });
+
+  it("emits no interrupt marker when no turn is in flight", async () => {
+    const { m, made, broadcast } = mgr();
+    let key = "";
+    await m.open("/a", "claude", "new", "n1", (x) => { if (x.type === "session_started") key = (x as { sessionKey: string }).sessionKey; });
+    made[0]!.streaming = false;
+    m.route({ type: "abort", sessionKey: key } as any);
+    expect(broadcast.find((x) => x.type === "user_message")).toBeUndefined();
+    expect(made[0]!.aborts).toBe(1);
+  });
+
   it("keeps both sessions alive across an open (no teardown on switch)", async () => {
     const { m, made } = mgr();
     await m.open("/a", "claude", "new", "n1", () => {});

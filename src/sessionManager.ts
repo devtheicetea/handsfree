@@ -208,7 +208,20 @@ export class SessionManager {
                          text: msg.text, attachments: msg.attachments, origin: origin ?? "" });
         ls.session.prompt(msg.text, msg.attachments);
         return true;
-      case "abort": ls.session.abortTurn(); ls.policy.abortAll(); ls.questions.abortAll(); return true;
+      case "abort": {
+        // Interrupting records "[Request interrupted by user]" in the transcript as a
+        // USER-side entry. Emit it live too (matching disk + reopen) so it shows on the
+        // user's side immediately and is never spoken — the SDK doesn't stream it. Origin
+        // "" so every client, including the one that aborted, shows it.
+        if (ls.session.streaming) {
+          this.broadcast({ type: "user_message", sessionKey: msg.sessionKey, turn: ls.session.currentTurn,
+                           text: "[Request interrupted by user]", origin: "" });
+        }
+        ls.session.abortTurn();
+        ls.policy.abortAll();
+        ls.questions.abortAll();
+        return true;
+      }
       case "set_mode": {
         ls.policy.setMode(msg.mode);
         // Persist by the durable session id so the choice survives a restart.

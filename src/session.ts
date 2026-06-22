@@ -162,7 +162,7 @@ export class Session {
     emit({ type: "status", state: this.currentStatus } as any);
   }
 
-  /** Interrupt the in-flight turn (barge-in) WITHOUT ending the session. */
+  /** Interrupt the in-flight turn (barge-in / stop) WITHOUT ending the session. */
   abortTurn(): void {
     void this.backend.interrupt().catch(() => {});
   }
