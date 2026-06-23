@@ -142,13 +142,15 @@ export function historyForProject(
     const s = scanProjectDir(projectsRoot, entry);
     if (!s) continue;
     if (s.cwd !== projectPath) continue;
-    // Matched project. Use the resumed session's file when a specific id is given.
-    let text = s.newestText;
-    if (resume !== "latest") {
-      const match = s.sessions.find((x) => x.sessionId === resume);
-      if (match) text = readSafe(match.file) ?? s.newestText;
-    }
-    return parseHistory(text, limit);
+    // Matched project. "latest" uses the newest file; a specific id uses ONLY
+    // that id's own file. Never substitute another session's transcript for a
+    // missing id — a brand-new session's backend id has no file yet, and on a
+    // reconnect the fallback would seed it with the previous session's messages.
+    if (resume === "latest") return parseHistory(s.newestText, limit);
+    const match = s.sessions.find((x) => x.sessionId === resume);
+    if (!match) return [];
+    const text = readSafe(match.file);
+    return text ? parseHistory(text, limit) : [];
   }
   return [];
 }

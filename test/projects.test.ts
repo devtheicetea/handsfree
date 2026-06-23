@@ -104,7 +104,7 @@ describe("historyForProject", () => {
 });
 
 describe("historyForProject specific-session-id branch", () => {
-  it("returns the named session's turns, and falls back to newest for a missing id", () => {
+  it("returns the named session's turns, and [] for a missing id (never another session)", () => {
     const home = mkdtempSync(join(tmpdir(), "claude-home-sid-"));
     const dir = join(home, "projects", "-Users-me-app");
     mkdirSync(dir, { recursive: true });
@@ -117,8 +117,8 @@ describe("historyForProject specific-session-id branch", () => {
       JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "from-s2" } }),
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "reply-s2" }] } }),
     ].join("\n") + "\n");
-    // Pin distinct mtimes so the newest-session fallback is deterministic on
-    // fast CI filesystems (both writes can otherwise share one mtime tick).
+    // Pin distinct mtimes so s2 is deterministically the newest on fast CI
+    // filesystems — the missing-id case below proves we never substitute it.
     utimesSync(join(dir, "s1.jsonl"), new Date(1_000), new Date(1_000));
     utimesSync(join(dir, "s2.jsonl"), new Date(2_000), new Date(2_000));
 
@@ -129,11 +129,10 @@ describe("historyForProject specific-session-id branch", () => {
       { role: "assistant", text: "reply-s1", tools: [] },
     ]);
 
-    // A missing session id should fall back to the newest (s2).
-    expect(historyForProject(home, "/Users/me/app", "missing-id", 25)).toEqual([
-      { role: "user", text: "from-s2", tools: [] },
-      { role: "assistant", text: "reply-s2", tools: [] },
-    ]);
+    // A missing session id (e.g. a brand-new session whose file doesn't exist
+    // yet) must return [] — never the newest session's turns. Substituting s2
+    // here is the reconnect bug that filled a new empty session with old messages.
+    expect(historyForProject(home, "/Users/me/app", "missing-id", 25)).toEqual([]);
 
     rmSync(home, { recursive: true, force: true });
   });

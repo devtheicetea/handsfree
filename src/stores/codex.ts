@@ -172,9 +172,13 @@ export class CodexStore implements SessionStore {
   history(projectPath: string, resume: string, limit: number): HistoryItem[] {
     if (resume === "new") return [];
     const all = this.scan();
-    const match = resume !== "latest"
-      ? (all.find((s) => s.threadId === resume) ?? all.find((s) => s.cwd === projectPath))
-      : all.find((s) => s.cwd === projectPath);
+    // "latest" uses the project's newest thread; a specific id uses ONLY that
+    // thread. Never fall back to another thread in the project for a missing id
+    // — a brand-new session has no rollout yet, and on a reconnect the fallback
+    // would seed it with a different session's messages.
+    const match = resume === "latest"
+      ? all.find((s) => s.cwd === projectPath)
+      : all.find((s) => s.threadId === resume);
     return match ? parseCodexHistory(match.text, limit) : [];
   }
 

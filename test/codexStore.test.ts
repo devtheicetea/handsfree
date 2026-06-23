@@ -102,6 +102,9 @@ describe("CodexStore", () => {
     expect(store.history("/Users/dev/proj", "latest", 25)).toHaveLength(4);
     expect(store.history("/Users/dev/proj", "thr_abc", 1)).toEqual([{ role: "assistant", text: "It passes.", tools: [] }]);
     expect(store.history("/Users/dev/proj", "new", 25)).toEqual([]);
+    // A specific id with no rollout (e.g. a brand-new session) must return [] —
+    // never another thread in the same project (the reconnect history bug).
+    expect(store.history("/Users/dev/proj", "thr_missing", 25)).toEqual([]);
     expect(store.history("/unknown", "latest", 25)).toEqual([]);
   });
 
