@@ -10,7 +10,7 @@ const SKIP_TYPES = new Set(["last-prompt", "mode", "permission-mode", "attachmen
 
 // minimal shape — only the fields the parser reads
 interface ContentBlock { type?: string; text?: string; name?: string }
-interface RawEntry { type?: string; message?: { role?: string; content?: unknown } }
+interface RawEntry { type?: string; promptSource?: string; message?: { role?: string; content?: unknown } }
 
 /** Extract a real user message's text, or null if the entry is a tool_result (not a typed message). */
 function userText(content: unknown): string | null {
@@ -51,6 +51,14 @@ export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
     if (!t || SKIP_TYPES.has(t)) continue;
 
     if (t === "user") {
+      // Harness-injected plumbing (task-notifications, system reminders) is fed to
+      // the model as a user turn tagged promptSource:"system" — NOT something the
+      // person typed. Claude Code itself distinguishes real input (promptSource
+      // "user_input"/"sdk") from these; skip them so the raw <task-notification>
+      // XML never renders as a chat bubble.
+      // flush first: this sits between the prior assistant turn and the agent's
+      // reply to it, so closing the open turn keeps them as two separate bubbles.
+      if (o.promptSource === "system") { flush(); continue; }
       const ut = userText(o.message?.content);
       if (ut === null) continue;        // tool_result -> part of the assistant turn
       flush();

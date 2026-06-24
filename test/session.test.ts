@@ -221,4 +221,55 @@ describe("Session (backend-agnostic shell)", () => {
     expect(caught.some((m) => m.type === "response")).toBe(false);
     expect(caught.some((m) => m.type === "status" && (m as any).state === "idle")).toBe(true);
   });
+
+  it("stays 'working' (thinking) — not idle — while a background task is pending after the turn ends", async () => {
+    const backend = new FakeBackend();
+    const emitted: BridgeToClient[] = [];
+    const session = new Session(backend);
+    await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: (m) => emitted.push(m) });
+    await tick();
+    // A turn streams, launches a background task, then the turn ends.
+    backend.events.push({ kind: "text_delta", text: "starting" });
+    await tick();
+    backend.events.push({ kind: "task_started", taskId: "t1", description: "Compile build 8" });
+    await tick();
+    backend.events.push({ kind: "turn_done" });
+    await tick();
+    const states = (emitted.filter((m) => m.type === "status") as Array<{ state: string }>).map((s) => s.state);
+    expect(states[states.length - 1]).toBe("thinking"); // NOT idle — the task is still running
+    expect(session.streaming).toBe(false);              // nothing actively streaming -> reattach snapshots, not buffer-replays
+    expect(session.hasPendingTasks).toBe(true);
+    expect(session.pendingTaskCount).toBe(1);
+    // The task settles -> pending clears (the idle transition is debounced, not asserted here).
+    backend.events.push({ kind: "task_settled", taskId: "t1", status: "completed", summary: "ok" });
+    await tick();
+    expect(session.hasPendingTasks).toBe(false);
+    await session.stop();
+  });
+
+  it("treats an SDK auto-continuation after a task settles as its own fresh turn", async () => {
+    const backend = new FakeBackend();
+    const emitted: BridgeToClient[] = [];
+    const session = new Session(backend);
+    await session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: (m) => emitted.push(m) });
+    await tick();
+    backend.events.push({ kind: "text_delta", text: "turn one" });          // turn 1 begins
+    backend.events.push({ kind: "task_started", taskId: "t1", description: "x" });
+    backend.events.push({ kind: "turn_done" });
+    await tick();
+    backend.events.push({ kind: "task_settled", taskId: "t1", status: "completed", summary: "" });
+    await tick();
+    // The agent reacts to the notification with NO client prompt — a fresh turn.
+    backend.events.push({ kind: "text_delta", text: "auto reply" });
+    await tick();
+    expect(session.streaming).toBe(true);                                    // actively streaming again
+    const replies = emitted.filter((m) => m.type === "response") as Array<{ text: string; turn: number }>;
+    const turn1 = replies.find((r) => r.text === "turn one")!.turn;
+    const auto = replies.find((r) => r.text === "auto reply")!.turn;
+    expect(auto).toBeGreaterThan(turn1);                                     // a new turn number, its own bubble
+    backend.events.push({ kind: "turn_done" });
+    await tick();
+    expect((emitted.filter((m) => m.type === "status") as Array<{ state: string }>).pop()?.state).toBe("idle");
+    await session.stop();
+  });
 });

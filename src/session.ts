@@ -4,6 +4,12 @@ import type { Question } from "./questions.js";
 import type { BridgeToClient } from "./protocol.js";
 import { debugLog, preview } from "./debug.js";
 
+// After a background task settles, the agent usually auto-continues (reacts to the
+// notification) within ~1s. Wait this long before reporting idle so we don't flash
+// idle — and a premature "your turn" — in the gap before that reply's first token.
+// A starting turn cancels the wait. Only the rare no-follow-up settle waits it out.
+const SETTLE_IDLE_DEBOUNCE_MS = 3000;
+
 export interface StartParams {
   projectPath: string;
   resume: string | undefined;
@@ -41,6 +47,14 @@ export class Session {
    *  instead of flipping to idle the moment the turn ends. NOT yet wired into the
    *  emitted status (deferred — see backlog #12). */
   private readonly pendingTasks = new Map<string, string>();
+  /** True while text is ACTIVELY streaming (a turn is generating) — distinct from
+   *  currentStatus, which now also reads "thinking" while a background task is
+   *  pending but nothing is streaming. Reattach/replay keys off this, NOT the
+   *  status, so a "working" (task-pending) session correctly gets a history
+   *  snapshot instead of a stale buffer replay. */
+  private turnActive = false;
+  /** Debounce timer for the idle transition after a task settles (see constant). */
+  private settleIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(backend: AgentBackend) {
     this.backend = backend;
@@ -80,23 +94,33 @@ export class Session {
             this.sessionId = ev.id;
             onSessionId?.(ev.id);
           } else if (ev.kind === "text_delta") {
+            this.beginTurnIfNeeded();   // covers an SDK auto-continuation (no client prompt)
             this.send({ type: "response", turn: this.turnNo, text: ev.text, done: false } as any);
           } else if (ev.kind === "turn_done") {
+            this.turnActive = false;
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
-            this.send({ type: "status", state: "idle" } as any);
+            // Don't report idle while a background task is still running — the turn
+            // ended but work is in flight, so stay "working" (thinking) until it settles.
+            this.send({ type: "status", state: this.pendingTasks.size > 0 ? "thinking" : "idle" } as any);
             this.dequeueNext();
           } else if (ev.kind === "turn_failed") {
             // The turn errored (auth/quota/etc.) but the session stays alive.
+            this.turnActive = false;
             this.send({ type: "error", code: "turn_failed", message: ev.message } as any);
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
-            this.send({ type: "status", state: "idle" } as any);
+            this.send({ type: "status", state: this.pendingTasks.size > 0 ? "thinking" : "idle" } as any);
             this.dequeueNext();
           } else if (ev.kind === "task_started") {
             this.pendingTasks.set(ev.taskId, ev.description);
             debugLog("task.started", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, desc: ev.description, pending: this.pendingTasks.size });
+            if (this.settleIdleTimer) { clearTimeout(this.settleIdleTimer); this.settleIdleTimer = null; }
+            if (this.currentStatus !== "thinking") this.send({ type: "status", state: "thinking" } as any);
           } else if (ev.kind === "task_settled") {
             this.pendingTasks.delete(ev.taskId);
             debugLog("task.settled", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, status: ev.status, pending: this.pendingTasks.size });
+            // Turn's over and nothing left pending -> go idle, but debounce so an
+            // imminent auto-continuation doesn't get a premature "your turn" first.
+            if (!this.turnActive && this.pendingTasks.size === 0) this.scheduleIdleAfterSettle();
           }
         }
       } catch (err) {
@@ -106,7 +130,10 @@ export class Session {
       } finally {
         this.active = false;
         this.busy = false;
+        this.turnActive = false;
         this.pendingPrompts = [];
+        this.pendingTasks.clear();
+        if (this.settleIdleTimer) { clearTimeout(this.settleIdleTimer); this.settleIdleTimer = null; }
       }
     })();
 
@@ -120,10 +147,38 @@ export class Session {
 
   private runPrompt(text: string, attachments?: ImageAttachment[]): void {
     this.busy = true;
+    this.turnActive = true;
     this.turnNo += 1;
     this.turnBuffer = [];
+    if (this.settleIdleTimer) { clearTimeout(this.settleIdleTimer); this.settleIdleTimer = null; }
     this.send({ type: "status", state: "thinking" } as any);
     this.backend.prompt(text, attachments);
+  }
+
+  /** Mark the start of a generating turn. runPrompt handles client prompts; this
+   *  covers an SDK auto-continuation (e.g. the agent reacting to a settled
+   *  background task) that streams with no client prompt — give it a fresh turn
+   *  number + buffer so it renders as its own message, and flip status to thinking. */
+  private beginTurnIfNeeded(): void {
+    if (this.settleIdleTimer) { clearTimeout(this.settleIdleTimer); this.settleIdleTimer = null; }
+    if (this.turnActive) return;
+    this.turnActive = true;
+    this.turnNo += 1;
+    this.turnBuffer = [];
+    if (this.currentStatus !== "thinking") this.send({ type: "status", state: "thinking" } as any);
+  }
+
+  /** Report idle a short moment after a task settles, unless a turn starts first
+   *  (the common case: the agent auto-continues). Avoids an idle/"your turn" flash
+   *  in the gap before the auto-reply's first token. */
+  private scheduleIdleAfterSettle(): void {
+    if (this.settleIdleTimer) clearTimeout(this.settleIdleTimer);
+    this.settleIdleTimer = setTimeout(() => {
+      this.settleIdleTimer = null;
+      if (!this.turnActive && this.pendingTasks.size === 0 && this.currentStatus === "thinking") {
+        this.send({ type: "status", state: "idle" } as any);
+      }
+    }, SETTLE_IDLE_DEBOUNCE_MS);
   }
 
   private dequeueNext(): void {
@@ -153,16 +208,18 @@ export class Session {
     return this.sessionId;
   }
 
-  /** True while a turn is in flight (its partial reply is replayable via replayTo).
-   *  When false, a reconnecting client should be caught up with a history snapshot. */
+  /** True while a turn is ACTIVELY streaming (its partial reply is replayable via
+   *  replayTo). When false, a reconnecting client must be caught up with a history
+   *  snapshot. Deliberately keyed off turnActive, NOT currentStatus: the status
+   *  reads "thinking" while a background task is pending with nothing streaming, and
+   *  in that case the buffer is stale, so reattach must send a snapshot. */
   get streaming(): boolean {
-    return this.currentStatus === "thinking";
+    return this.turnActive;
   }
 
   /** True while a background task launched this session is still running. The turn
-   *  can finish (turn_done -> idle) before the task settles. NOT yet folded into the
-   *  emitted status — the consumer for this is the deferred status-logic change
-   *  (backlog #12): report "working" while (streaming || hasPendingTasks). */
+   *  can finish before the task settles; the status stays "thinking" (working) until
+   *  it does — see the turn_done / task_settled handling. */
   get hasPendingTasks(): boolean { return this.pendingTasks.size > 0; }
   get pendingTaskCount(): number { return this.pendingTasks.size; }
 
@@ -175,7 +232,10 @@ export class Session {
    *  just subscribed). Does NOT change the live emit — the session keeps
    *  broadcasting to all subscribers via its original emit. */
   replayTo(emit: (msg: BridgeToClient) => void): void {
-    if (this.currentStatus === "thinking") {
+    // Only replay the buffer when a turn is ACTIVELY streaming — a "working"
+    // (task-pending, status thinking but nothing streaming) session's buffer is
+    // the last finished turn, which reattachAllTo will instead cover via snapshot.
+    if (this.turnActive) {
       for (const text of this.turnBuffer) emit({ type: "response", turn: this.turnNo, text, done: false } as any);
     }
     emit({ type: "status", state: this.currentStatus } as any);
