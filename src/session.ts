@@ -35,6 +35,12 @@ export class Session {
   private turnNo = 0;
   private busy = false;
   private pendingPrompts: { text: string; attachments?: ImageAttachment[] }[] = [];
+  /** Background tasks launched this session that haven't settled yet (taskId ->
+   *  human-readable description). A turn can finish while one of these is still
+   *  running; tracked so a future status-logic change can report "still working"
+   *  instead of flipping to idle the moment the turn ends. NOT yet wired into the
+   *  emitted status (deferred — see backlog #12). */
+  private readonly pendingTasks = new Map<string, string>();
 
   constructor(backend: AgentBackend) {
     this.backend = backend;
@@ -85,6 +91,12 @@ export class Session {
             this.send({ type: "response", turn: this.turnNo, text: "", done: true } as any);
             this.send({ type: "status", state: "idle" } as any);
             this.dequeueNext();
+          } else if (ev.kind === "task_started") {
+            this.pendingTasks.set(ev.taskId, ev.description);
+            debugLog("task.started", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, desc: ev.description, pending: this.pendingTasks.size });
+          } else if (ev.kind === "task_settled") {
+            this.pendingTasks.delete(ev.taskId);
+            debugLog("task.settled", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, status: ev.status, pending: this.pendingTasks.size });
           }
         }
       } catch (err) {
@@ -146,6 +158,13 @@ export class Session {
   get streaming(): boolean {
     return this.currentStatus === "thinking";
   }
+
+  /** True while a background task launched this session is still running. The turn
+   *  can finish (turn_done -> idle) before the task settles. NOT yet folded into the
+   *  emitted status — the consumer for this is the deferred status-logic change
+   *  (backlog #12): report "working" while (streaming || hasPendingTasks). */
+  get hasPendingTasks(): boolean { return this.pendingTasks.size > 0; }
+  get pendingTaskCount(): number { return this.pendingTasks.size; }
 
   /** Stop routing output to the client immediately (project switch). */
   detachEmit(): void {

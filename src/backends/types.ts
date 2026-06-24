@@ -11,7 +11,13 @@ export type AgentEvent =
   | { kind: "session_id"; id: string }   // real session/thread id, once known
   | { kind: "text_delta"; text: string } // streamed assistant text
   | { kind: "turn_done" }                 // the in-flight turn finished
-  | { kind: "turn_failed"; message: string }; // turn ended in error; session stays alive
+  | { kind: "turn_failed"; message: string } // turn ended in error; session stays alive
+  // Background-task lifecycle (a tool ran with run_in_background): the turn can
+  // finish while the task is still running, then settle later out-of-band. Used
+  // to keep the session's activity status honest ("still working") instead of
+  // flipping to idle the moment the turn ends.
+  | { kind: "task_started"; taskId: string; description: string }
+  | { kind: "task_settled"; taskId: string; status: string; summary: string };
 
 export interface BackendStartOpts {
   projectPath: string;

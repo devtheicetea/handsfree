@@ -138,12 +138,23 @@ export class ClaudeBackend implements AgentBackend {
     this.queryObj = q;
     try {
       for await (const msg of q) {
-        if (msg.type === "system" && (msg as { subtype?: string }).subtype === "init") {
+        const subtype = (msg as { subtype?: string }).subtype;
+        if (msg.type === "system" && subtype === "init") {
           // init only arrives AFTER the first user message; Session deliberately
           // does not gate session_started on it (deadlock — see session.ts).
           const id = (msg as { session_id: string }).session_id;
           await this.waitForSessionFile(id);
           yield { kind: "session_id", id };
+        } else if (msg.type === "system" && subtype === "task_started") {
+          // A blocking tool (Bash/Task) was run with run_in_background: it returns
+          // immediately and the turn continues, but the task keeps running and
+          // settles later via task_notification. SDKTaskStartedMessage.
+          const m = msg as { task_id: string; description?: string };
+          yield { kind: "task_started", taskId: m.task_id, description: m.description ?? "" };
+        } else if (msg.type === "system" && subtype === "task_notification") {
+          // The background task settled. SDKTaskNotificationMessage.
+          const m = msg as { task_id: string; status?: string; summary?: string };
+          yield { kind: "task_settled", taskId: m.task_id, status: m.status ?? "completed", summary: m.summary ?? "" };
         } else if (msg.type === "stream_event") {
           const ev = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
           if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
