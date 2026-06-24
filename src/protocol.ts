@@ -50,6 +50,7 @@ export const viewSessionSchema = z.object({
 export const unviewSessionSchema = z.object({ type: z.literal("unview_session") });
 export const unsubscribeSchema = z.object({ type: z.literal("unsubscribe"), sessionKey: z.string().min(1) });
 export const deleteSessionSchema = z.object({ type: z.literal("delete_session"), projectPath: z.string().min(1), agent: agentSchema, sessionId: z.string().min(1) });
+export const renameSessionSchema = z.object({ type: z.literal("rename_session"), projectPath: z.string().min(1), agent: agentSchema, sessionId: z.string().min(1), name: z.string() });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
@@ -65,6 +66,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   unviewSessionSchema,
   unsubscribeSchema,
   deleteSessionSchema,
+  renameSessionSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;

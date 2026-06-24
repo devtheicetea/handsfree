@@ -3,10 +3,11 @@ import { Session } from "./session.js";
 import { PermissionPolicy, type AskRequest } from "./permissions.js";
 import { QuestionRegistry, type QuestionRequest } from "./questions.js";
 import { ModeStore } from "./modeStore.js";
+import { NameStore } from "./nameStore.js";
 import { ClaudeBackend } from "./backends/claude.js";
 import { CodexBackend } from "./backends/codex.js";
 import type { AgentName } from "./backends/types.js";
-import type { SessionStore } from "./stores/types.js";
+import type { SessionStore, SessionMeta } from "./stores/types.js";
 import { ClaudeStore } from "./stores/claude.js";
 import { CodexStore } from "./stores/codex.js";
 import type { BridgeToClient, ClientMessage } from "./protocol.js";
@@ -30,6 +31,7 @@ export interface SessionManagerDeps {
   codexPath?: string | null;
   model?: string | null;
   modeStore?: ModeStore;   // durable per-session permission mode (default ~/.handsfree/modes.json)
+  nameStore?: NameStore;   // durable per-session custom name (default ~/.handsfree/session-names.json)
   broadcast: (m: BridgeToClient) => void;   // server fan-out by m.sessionKey
 }
 
@@ -44,6 +46,7 @@ export class SessionManager {
   private readonly makeSession: (agent: AgentName, projectPath: string) => Session;
   private readonly stores: { claude: SessionStore; codex: SessionStore };
   private readonly modeStore: ModeStore;
+  private readonly nameStore: NameStore;
   private readonly broadcast: (m: BridgeToClient) => void;
 
   constructor(deps: SessionManagerDeps) {
@@ -56,6 +59,7 @@ export class SessionManager {
         : new Session(new CodexBackend({ codexPath })));
     this.stores = deps.stores ?? { claude: new ClaudeStore(), codex: new CodexStore() };
     this.modeStore = deps.modeStore ?? new ModeStore();
+    this.nameStore = deps.nameStore ?? new NameStore();
     this.broadcast = deps.broadcast;
   }
 
@@ -243,6 +247,20 @@ export class SessionManager {
    *  (no live session/policy yet) can still show the mode that will be enforced. */
   savedMode(agent: AgentName, sessionId: string) {
     return this.modeStore.get(agent, sessionId);
+  }
+
+  /** Set/clear a session's durable custom name (empty string clears it). */
+  setName(agent: AgentName, sessionId: string, name: string): void {
+    this.nameStore.set(agent, sessionId, name);
+  }
+
+  /** A project+agent's session list with any custom names applied over the
+   *  transcript-derived titles. Use this wherever a `sessions` message is built. */
+  listSessions(agent: AgentName, projectPath: string): SessionMeta[] {
+    return this.stores[agent].listSessions(projectPath).map((s) => {
+      const name = this.nameStore.get(agent, s.sessionId);
+      return name ? { ...s, title: name } : s;
+    });
   }
 
   /** Folder + session id for a sessionKey — used to tag broadcast debug logs. */

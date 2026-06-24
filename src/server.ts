@@ -199,12 +199,19 @@ export class BridgeServer {
         return;
       case "list_sessions":
         this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
-                        sessions: this.stores[msg.agent].listSessions(msg.projectPath) });
+                        sessions: this.sessions.listSessions(msg.agent, msg.projectPath) });
         return;
       case "delete_session":
         await this.sessions.deleteSession(msg.projectPath, msg.agent, msg.sessionId);
         this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
-                        sessions: this.stores[msg.agent].listSessions(msg.projectPath) });
+                        sessions: this.sessions.listSessions(msg.agent, msg.projectPath) });
+        return;
+      case "rename_session":
+        // Persist the custom name (survives bridge restart), then re-send the
+        // authoritative list with the new title applied.
+        this.sessions.setName(msg.agent, msg.sessionId, msg.name);
+        this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
+                        sessions: this.sessions.listSessions(msg.agent, msg.projectPath) });
         return;
       case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, agent: msg.agent, resume: msg.resume });
