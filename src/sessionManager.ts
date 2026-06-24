@@ -151,7 +151,7 @@ export class SessionManager {
   }
 
   /** Replay every live session's current state to a (re)connected client. */
-  reattachAllTo(emit: (m: BridgeToClient) => void): string[] {
+  reattachAllTo(emit: (m: BridgeToClient) => void, log?: (msg: string, data?: Record<string, unknown>) => void): string[] {
     const keys: string[] = [];
     for (const [key, ls] of this.sessions) {
       if (ls.session.isActive()) {
@@ -160,12 +160,18 @@ export class SessionManager {
         // If no turn is in flight, replayTo can't recover a reply that completed
         // while this client was disconnected (e.g. phone backgrounded mid-stream).
         // Send an authoritative history snapshot so the client catches up.
-        if (!ls.session.streaming) {
-          const sid = ls.session.backendSessionId ?? ls.resumeId ?? "";
+        const streaming = ls.session.streaming;
+        let sentHistory = false, itemCount = 0, sid = "";
+        if (!streaming) {
+          sid = ls.session.backendSessionId ?? ls.resumeId ?? "";
           if (sid) {
-            this.tagged(key, emit)({ type: "history", items: this.stores[ls.agent].history(ls.projectPath, sid, HISTORY_LIMIT) } as BridgeToClient);
+            const items = this.stores[ls.agent].history(ls.projectPath, sid, HISTORY_LIMIT);
+            itemCount = items.length;
+            sentHistory = true;
+            this.tagged(key, emit)({ type: "history", items } as BridgeToClient);
           }
         }
+        log?.("reattach", { key, streaming, sentHistory, itemCount, sid });
         keys.push(key);
       }
     }

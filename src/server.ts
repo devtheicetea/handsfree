@@ -6,7 +6,7 @@ import { Session } from "./session.js";
 import { mergeProjects } from "./projects.js";
 import { SessionManager } from "./sessionManager.js";
 import { ClientRegistry } from "./clients.js";
-import { debugLog } from "./debug.js";
+import { debugLog, isDebug } from "./debug.js";
 import { ClaudeStore } from "./stores/claude.js";
 import { CodexStore } from "./stores/codex.js";
 import { checkCodexAvailable } from "./backends/codex.js";
@@ -168,7 +168,9 @@ export class BridgeServer {
         if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
         this.logger?.info("hello", { clientId });
         // Catch this client up on every live session AND subscribe it to them.
-        const keys = this.sessions.reattachAllTo((m) => this.send(ws, m));
+        // Reattach diagnostics only in debug mode (HANDSFREE_ENV=debug).
+        const keys = this.sessions.reattachAllTo((m) => this.send(ws, m),
+          isDebug() ? (m, d) => this.logger?.info(m, d) : undefined);
         for (const k of keys) this.clients.subscribe(ws, k);
         return;
       }
@@ -212,6 +214,13 @@ export class BridgeServer {
         this.sessions.setName(msg.agent, msg.sessionId, msg.name);
         this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
                         sessions: this.sessions.listSessions(msg.agent, msg.projectPath) });
+        return;
+      case "diag":
+        // Client reconnect/catch-up breadcrumb — landed in the bridge log file
+        // alongside the bridge's own events, but only when running in debug mode
+        // (HANDSFREE_ENV=debug). Accepted-and-ignored in prod so older/debug clients
+        // never error. Kept for diagnosing the missing-final-message reconnect path.
+        if (isDebug()) this.logger?.info("client_diag", { msg: msg.msg });
         return;
       case "open_session": {
         this.logger?.info("open_session", { projectPath: msg.projectPath, agent: msg.agent, resume: msg.resume });

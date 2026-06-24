@@ -51,6 +51,9 @@ export const unviewSessionSchema = z.object({ type: z.literal("unview_session") 
 export const unsubscribeSchema = z.object({ type: z.literal("unsubscribe"), sessionKey: z.string().min(1) });
 export const deleteSessionSchema = z.object({ type: z.literal("delete_session"), projectPath: z.string().min(1), agent: agentSchema, sessionId: z.string().min(1) });
 export const renameSessionSchema = z.object({ type: z.literal("rename_session"), projectPath: z.string().min(1), agent: agentSchema, sessionId: z.string().min(1), name: z.string() });
+// Diagnostic breadcrumb from the client — logged to handsfree-bridge.log so the
+// client's reconnect/catch-up decisions land in the same file as the bridge's.
+export const diagSchema = z.object({ type: z.literal("diag"), msg: z.string() });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
@@ -67,6 +70,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   unsubscribeSchema,
   deleteSessionSchema,
   renameSessionSchema,
+  diagSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
