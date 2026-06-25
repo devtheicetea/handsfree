@@ -55,6 +55,16 @@ export const renameSessionSchema = z.object({ type: z.literal("rename_session"),
 // client's reconnect/catch-up decisions land in the same file as the bridge's.
 export const diagSchema = z.object({ type: z.literal("diag"), msg: z.string() });
 
+// Keep the active session alive past the disconnect grace: the app HOLDS it (voice mode on, or
+// backgrounding with the conversation open) and RELEASES it when the user leaves it. See
+// SessionManager.scheduleGracefulStop.
+export const holdSessionSchema = z.object({
+  type: z.literal("session_hold"),
+  sessionKey: z.string().min(1),
+  reason: z.enum(["voice", "background"]).optional(),
+});
+export const releaseSessionSchema = z.object({ type: z.literal("session_release"), sessionKey: z.string().min(1) });
+
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
   listProjectsSchema,
@@ -71,6 +81,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   deleteSessionSchema,
   renameSessionSchema,
   diagSchema,
+  holdSessionSchema,
+  releaseSessionSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;

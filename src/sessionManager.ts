@@ -32,6 +32,9 @@ interface LiveSession {
   resumeId: string | null;
   /** Wall-clock of the last open/prompt — picks the "held" session on disconnect. */
   lastActiveMs: number;
+  /** Explicitly held by the client (voice mode on, or backgrounded with this conversation
+   *  open) — gets the long grace regardless of recency; cleared on release. */
+  held: boolean;
 }
 
 export interface SessionManagerDeps {
@@ -148,7 +151,7 @@ export class SessionManager {
     const savedMode = resumeId ? this.modeStore.get(agent, resumeId) : undefined;
     if (savedMode) policy.setMode(savedMode);
     const session = this.makeSession(agent, projectPath);
-    this.sessions.set(sessionKey, { session, policy, questions, projectPath, agent, resumeId, lastActiveMs: Date.now() });
+    this.sessions.set(sessionKey, { session, policy, questions, projectPath, agent, resumeId, lastActiveMs: Date.now(), held: false });
     toOpener({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
     this.tagged(sessionKey, toOpener)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
     await session.start({
@@ -230,6 +233,14 @@ export class SessionManager {
                          text: msg.text, attachments: msg.attachments, origin: origin ?? "" });
         ls.lastActiveMs = Date.now();   // this is now the "held" session if the client drops
         ls.session.prompt(msg.text, msg.attachments);
+        return true;
+      case "session_hold":
+        ls.held = true;   // voice mode on, or backgrounded with this conversation open
+        debugLog("session.hold", { folder: ls.projectPath, session: ls.session.backendSessionId ?? "", reason: msg.reason ?? "" });
+        return true;
+      case "session_release":
+        ls.held = false;
+        debugLog("session.release", { folder: ls.projectPath, session: ls.session.backendSessionId ?? "" });
         return true;
       case "abort": {
         // Interrupting records "[Request interrupted by user]" in the transcript as a
@@ -324,9 +335,17 @@ export class SessionManager {
     for (const [key, ls] of this.sessions) {
       if (ls.lastActiveMs > heldAt) { heldAt = ls.lastActiveMs; heldKey = key; }
     }
-    for (const key of this.sessions.keys()) {
-      this.scheduleStop(key, key === heldKey ? HELD_GRACE_MS : IDLE_GRACE_MS);
+    for (const [key, ls] of this.sessions) {
+      const isHeld = key === heldKey || ls.held;   // most-recently-active OR explicitly held (voice/bg)
+      this.scheduleStop(key, isHeld ? HELD_GRACE_MS : IDLE_GRACE_MS);
     }
+  }
+
+  /** Client explicitly holds/releases a session (voice mode on, or backgrounding with it open).
+   *  A held session gets the long grace on disconnect regardless of recency. */
+  setHeld(sessionKey: string, held: boolean): void {
+    const ls = this.sessions.get(sessionKey);
+    if (ls) ls.held = held;
   }
 
   private scheduleStop(key: string, delayMs: number): void {

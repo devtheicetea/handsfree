@@ -263,6 +263,11 @@ export class BridgeServer {
       case "unsubscribe":
         this.clients.unsubscribe(ws, msg.sessionKey);
         return;
+      case "session_hold":
+      case "session_release":
+        // Keep-alive intent for the active session; harmless no-op if it isn't a live session.
+        this.sessions.route(msg, clientId);
+        return;
       case "prompt":
       case "abort":
       case "set_mode":

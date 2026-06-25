@@ -124,6 +124,27 @@ describe("SessionManager", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("disconnect grace: an explicitly held (voice) session survives even when it isn't most-recent", async () => {
+    vi.useFakeTimers();
+    try {
+      const { m, made } = mgr();
+      let keyHeld = "";
+      await m.open("/plain", "claude", "new", "n0", () => {});                       // made[0]
+      vi.advanceTimersByTime(10);
+      await m.open("/held", "claude", "new", "n1", (x) => { if (x.type === "session_started") keyHeld = (x as any).sessionKey; });   // made[1]
+      vi.advanceTimersByTime(10);
+      await m.open("/recent", "claude", "new", "n2", () => {});                      // made[2] — most-recently-active
+      m.route({ type: "session_hold", sessionKey: keyHeld, reason: "voice" } as any);
+      m.scheduleGracefulStop();
+      vi.advanceTimersByTime(121_000);            // past the 2-min idle grace
+      expect(made[0]!.active).toBe(false);        // plain (neither held nor recent) → torn down
+      expect(made[1]!.active).toBe(true);         // explicitly held → survives
+      expect(made[2]!.active).toBe(true);         // most-recent → survives
+      m.route({ type: "session_release", sessionKey: keyHeld } as any);   // releasing clears the hold
+      expect((m as any).sessions.get(keyHeld).held).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("routes abort to the named session only", async () => {
     const { m, made } = mgr();
     const keysOut: string[] = [];
