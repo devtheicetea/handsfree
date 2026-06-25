@@ -20,4 +20,26 @@ describe("createLogger", () => {
     expect(entry.a).toBe(1);
     expect(typeof entry.ts).toBe("string");
   });
+
+  it("echoes each line to the echo sink when one is provided", () => {
+    const seen: string[] = [];
+    const log = createLogger(path, { echo: (line) => seen.push(line) });
+    log.info("hello", { a: 1 });
+    log.warn("careful");
+    log.close();
+    expect(seen).toHaveLength(2);
+    expect(JSON.parse(seen[0]!).msg).toBe("hello");
+    expect(JSON.parse(seen[0]!).a).toBe(1);
+    expect(JSON.parse(seen[1]!).level).toBe("warn");
+    // still written to the file too
+    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(2);
+  });
+
+  it("does not echo when no sink is given", () => {
+    // No echo option -> file-only, no throw.
+    const log = createLogger(path);
+    log.info("hi");
+    log.close();
+    expect(readFileSync(path, "utf8")).toContain("hi");
+  });
 });

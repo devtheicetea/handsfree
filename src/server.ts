@@ -199,10 +199,14 @@ export class BridgeServer {
       case "list_projects":
         this.send(ws, { type: "projects", projects: mergeProjects(this.stores.claude.listProjects(), this.stores.codex.listProjects()) });
         return;
-      case "list_sessions":
-        this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
-                        sessions: this.sessions.listSessions(msg.agent, msg.projectPath) });
+      case "list_sessions": {
+        this.logger?.info("list_sessions", { projectPath: msg.projectPath, agent: msg.agent });
+        const started = Date.now();
+        const sessions = this.sessions.listSessions(msg.agent, msg.projectPath);
+        this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent, sessions });
+        this.logger?.info("list_sessions_done", { projectPath: msg.projectPath, agent: msg.agent, count: sessions.length, ms: Date.now() - started });
         return;
+      }
       case "delete_session":
         await this.sessions.deleteSession(msg.projectPath, msg.agent, msg.sessionId);
         this.send(ws, { type: "sessions", projectPath: msg.projectPath, agent: msg.agent,
@@ -235,6 +239,7 @@ export class BridgeServer {
         return;
       }
       case "view_session": {
+        this.logger?.info("view_session", { projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId });
         // If this on-disk session is actually LIVE and bridge-owned, attach the
         // client to it (live streaming + answerable permissions) rather than
         // handing back a read-only mirror it can't update or answer from.
@@ -242,14 +247,17 @@ export class BridgeServer {
         if (liveKey) {
           this.clients.subscribe(ws, liveKey);
           this.sessions.attachExisting(liveKey, msg.nonce ?? "", msg.projectPath, msg.sessionId, (m) => this.send(ws, m));
+          this.logger?.info("view_session_live", { agent: msg.agent, sessionId: msg.sessionId });
           return;
         }
         this.clients.subscribeMirror(ws, `${msg.agent}:${msg.sessionId}`);
+        const started = Date.now();
         const items = this.stores[msg.agent].history(msg.projectPath, msg.sessionId, HISTORY_LIMIT);
         // Carry the session's saved permission mode so the picker shows what will be
         // enforced once the mirror forks live — not a stale safelist default.
         const mode = this.sessions.savedMode(msg.agent, msg.sessionId);
         this.send(ws, { type: "session_history", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items, mode });
+        this.logger?.info("view_session_done", { agent: msg.agent, sessionId: msg.sessionId, items: items.length, ms: Date.now() - started });
         return;
       }
       case "unview_session":

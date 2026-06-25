@@ -7,9 +7,17 @@ export interface Logger {
   close(): void;
 }
 
-export function createLogger(filePath: string): Logger {
+export interface LoggerOptions {
+  /** If set, every formatted JSON line is also passed here (e.g. console.log in
+   *  debug mode) so logs surface in the bridge's terminal, not just the file. */
+  echo?: (line: string) => void;
+}
+
+export function createLogger(filePath: string, opts: LoggerOptions = {}): Logger {
   const write = (level: string, msg: string, extra?: Record<string, unknown>) => {
-    appendFileSync(filePath, JSON.stringify({ ts: new Date().toISOString(), level, msg, ...extra }) + "\n");
+    const line = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...extra });
+    appendFileSync(filePath, line + "\n");
+    opts.echo?.(line);
   };
   return {
     info: (m, e) => write("info", m, e),

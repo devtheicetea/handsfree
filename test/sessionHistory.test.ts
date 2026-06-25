@@ -62,6 +62,24 @@ describe("parseHistory", () => {
     expect(parseHistory(jsonl, 25)).toEqual([{ role: "user", text: "here", tools: [] }]);
   });
 
+  it("skips harness-injected task notifications / system reminders by content, regardless of promptSource", () => {
+    const jsonl = [
+      line({ type: "user", promptSource: "sdk", message: { role: "user", content: "real question" } }),
+      line({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "turn one" }] } }),
+      // promptSource:"sdk" — identical to a real prompt; only the wrapper tag tells them apart.
+      line({ type: "user", promptSource: "sdk", message: { role: "user", content: "<task-notification>\n<task-id>b1</task-id>\n</task-notification>" } }),
+      line({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "turn two" }] } }),
+      // also the promptSource:"system" variant and a system reminder
+      line({ type: "user", promptSource: "system", message: { role: "user", content: "<task-notification>x</task-notification>" } }),
+      line({ type: "user", promptSource: "sdk", message: { role: "user", content: "  <system-reminder>be brief</system-reminder>" } }),
+    ].join("\n");
+    expect(parseHistory(jsonl, 25)).toEqual([
+      { role: "user", text: "real question", tools: [] },
+      { role: "assistant", text: "turn one", tools: [] },
+      { role: "assistant", text: "turn two", tools: [] },   // two stays its own bubble (flush kept them separate)
+    ]);
+  });
+
   it("lastTurn returns the final item or null", () => {
     const jsonl = line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", name: "Read", input: {} }] } });
     expect(lastTurn(jsonl)).toEqual({ role: "assistant", text: "", tools: ["Read"] });

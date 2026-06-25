@@ -51,16 +51,19 @@ export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
     if (!t || SKIP_TYPES.has(t)) continue;
 
     if (t === "user") {
-      // Harness-injected plumbing (task-notifications, system reminders) is fed to
-      // the model as a user turn tagged promptSource:"system" — NOT something the
-      // person typed. Claude Code itself distinguishes real input (promptSource
-      // "user_input"/"sdk") from these; skip them so the raw <task-notification>
-      // XML never renders as a chat bubble.
-      // flush first: this sits between the prior assistant turn and the agent's
-      // reply to it, so closing the open turn keeps them as two separate bubbles.
-      if (o.promptSource === "system") { flush(); continue; }
       const ut = userText(o.message?.content);
       if (ut === null) continue;        // tool_result -> part of the assistant turn
+      // Harness-injected plumbing (task notifications, system reminders) is fed to
+      // the model as a user turn — NOT something the person typed. It's tagged
+      // promptSource "system" OR "sdk" inconsistently (the latter is identical to a
+      // real prompt), so the reliable tell is the wrapper tag in the content: a real
+      // prompt never starts with one. Skip so the raw XML never renders as a bubble.
+      // flush() first so the two real turns it sits between stay separate.
+      const head = ut.trimStart();
+      if (o.promptSource === "system" || head.startsWith("<task-notification>") || head.startsWith("<system-reminder>")) {
+        flush();
+        continue;
+      }
       flush();
       items.push({ role: "user", text: ut, tools: [] });
     } else if (t === "assistant") {

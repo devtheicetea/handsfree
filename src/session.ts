@@ -114,10 +114,12 @@ export class Session {
             this.pendingTasks.set(ev.taskId, ev.description);
             debugLog("task.started", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, desc: ev.description, pending: this.pendingTasks.size });
             if (this.settleIdleTimer) { clearTimeout(this.settleIdleTimer); this.settleIdleTimer = null; }
+            this.send({ type: "task_started", id: ev.taskId, description: ev.description } as any);
             if (this.currentStatus !== "thinking") this.send({ type: "status", state: "thinking" } as any);
           } else if (ev.kind === "task_settled") {
             this.pendingTasks.delete(ev.taskId);
             debugLog("task.settled", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, status: ev.status, pending: this.pendingTasks.size });
+            this.send({ type: "task_settled", id: ev.taskId, status: ev.status } as any);
             // Turn's over and nothing left pending -> go idle, but debounce so an
             // imminent auto-continuation doesn't get a premature "your turn" first.
             if (!this.turnActive && this.pendingTasks.size === 0) this.scheduleIdleAfterSettle();
@@ -238,6 +240,11 @@ export class Session {
     if (this.turnActive) {
       for (const text of this.turnBuffer) emit({ type: "response", turn: this.turnNo, text, done: false } as any);
     }
+    // Re-announce still-running background tasks so the reconnecting client rebuilds
+    // its active-task label. The client clears its set on reconnect first, so tasks
+    // that settled while it was away simply don't reappear (no stale label, no
+    // spurious chime — settled is only sent live).
+    for (const [id, description] of this.pendingTasks) emit({ type: "task_started", id, description } as any);
     emit({ type: "status", state: this.currentStatus } as any);
   }
 

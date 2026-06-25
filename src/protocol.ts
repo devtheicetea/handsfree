@@ -95,6 +95,11 @@ export type BridgeToClient =
   | { type: "sessions"; projectPath: string; agent: AgentName; sessions: SessionMeta[] }
   | { type: "session_started"; nonce: string; sessionKey: string; projectPath: string; agent: AgentName; resumeId: string; mode: PermissionModeName }
   | { type: "status"; sessionKey: string; state: "thinking" | "idle" | "error" }
+  // Background-task lifecycle, surfaced so the client can show WHICH task is running
+  // ("⚙️ <description>…") and chime on completion. Incremental: started adds, settled
+  // removes; reattach re-sends a started for each still-running task (see replayTo).
+  | { type: "task_started"; sessionKey: string; id: string; description: string }
+  | { type: "task_settled"; sessionKey: string; id: string; status: string }
   | { type: "response"; sessionKey: string; turn: number; text: string; done: boolean }
   | { type: "permission_request"; sessionKey: string; id: string; tool: string; input: unknown; detail: string }
   | { type: "question_request"; sessionKey: string; id: string; questions: Question[] }

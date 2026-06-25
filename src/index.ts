@@ -32,7 +32,10 @@ async function main(): Promise<void> {
   if (arg === "-h" || arg === "--help") { console.log(HELP); return; }
 
   const config = loadConfig(process.env);
-  const logger = createLogger(join(tmpdir(), "handsfree-bridge.log"));
+  // In debug mode, echo every log line to the terminal too (not just the file),
+  // so `HANDSFREE_ENV=debug` actually shows the "verbose logging" it advertises.
+  const logger = createLogger(join(tmpdir(), "handsfree-bridge.log"),
+    config.env === "debug" ? { echo: (line) => console.log(line) } : {});
   const server = new BridgeServer({ config, logger });
   const port = await server.listen();
   logger.info("bridge listening", { port, bind: config.bindAddress, env: config.env });
