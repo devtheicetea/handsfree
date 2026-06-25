@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync, existsSync, unlinkSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync, unlinkSync, openSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { HistoryItem } from "../sessionHistory.js";
@@ -71,18 +71,34 @@ export function parseCodexHistory(jsonlText: string, limit: number): HistoryItem
   return items.slice(-limit);
 }
 
-interface ScannedRollout {
+interface ScannedMeta {
   threadId: string;
   cwd: string;
   mtimeMs: number;
-  text: string;
+  file: string;
+}
+
+/** Read just the first line (the session_meta) of a possibly-huge rollout without
+ *  loading the whole transcript. Codex embeds ~22KB of instructions in that line,
+ *  so read a generous head; only fall back to a full read if no newline is found. */
+function firstLine(file: string, headBytes = 1 << 18): string | null {
+  let fd: number;
+  try { fd = openSync(file, "r"); } catch { return null; }
+  try {
+    const buf = Buffer.allocUnsafe(headBytes);
+    const n = readSync(fd, buf, 0, headBytes, 0);
+    const nl = buf.indexOf(0x0a);
+    if (nl >= 0 && nl < n) return buf.subarray(0, nl).toString("utf8").trim();
+    if (n < headBytes) return buf.subarray(0, n).toString("utf8").trim();   // tiny file, no newline
+  } catch { return null; } finally { try { closeSync(fd); } catch { /* ignore */ } }
+  try { return readFileSync(file, "utf8").split("\n", 1)[0]!.trim(); } catch { return null; }
 }
 
 export class CodexStore implements SessionStore {
   constructor(private readonly codexHome = defaultCodexHome()) {}
 
-  /** All readable rollouts with a valid session_meta first line, newest first. */
-  private scan(): ScannedRollout[] {
+  /** Rollout files under the codex sessions dir, newest-first. Cheap: readdir + stat, no reads. */
+  private rolloutFiles(): Array<{ file: string; mtimeMs: number }> {
     const root = join(this.codexHome, "sessions");
     if (!existsSync(root)) return [];
     const files: Array<{ file: string; mtimeMs: number }> = [];
@@ -97,21 +113,36 @@ export class CodexStore implements SessionStore {
     };
     try { walk(root); } catch { /* unreadable dir -> partial results */ }
     files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return files;
+  }
 
-    const out: ScannedRollout[] = [];
-    for (const { file, mtimeMs } of files) {
-      let text: string;
-      try { text = readFileSync(file, "utf8"); } catch { continue; }
-      const nl = text.indexOf("\n");
-      const first = (nl >= 0 ? text.slice(0, nl) : text).trim();
+  /** Metadata (threadId, cwd, mtime) for every rollout, newest-first — reading
+   *  only each file's first line, NOT the whole transcript. */
+  private scanMeta(): ScannedMeta[] {
+    const out: ScannedMeta[] = [];
+    for (const { file, mtimeMs } of this.rolloutFiles()) {
+      const first = firstLine(file);
       if (!first) continue;
       let metaLine: CodexLine;
       try { metaLine = JSON.parse(first) as CodexLine; } catch { continue; }
       const p = metaLine.payload;
       if (metaLine.type !== "session_meta" || typeof p?.id !== "string" || typeof p?.cwd !== "string") continue;
-      out.push({ threadId: p.id, cwd: p.cwd, mtimeMs, text });
+      out.push({ threadId: p.id, cwd: p.cwd, mtimeMs, file });
     }
     return out;
+  }
+
+  /** The rollout file for a thread id, located by filename (`rollout-<ts>-<id>.jsonl`)
+   *  with a meta-scan fallback — so viewing one session reads one file, not all. */
+  private fileForId(sessionId: string): string | undefined {
+    for (const { file } of this.rolloutFiles()) {
+      if (file.endsWith(`-${sessionId}.jsonl`)) return file;
+    }
+    return this.scanMeta().find((s) => s.threadId === sessionId)?.file;
+  }
+
+  private fullText(file: string): string {
+    try { return readFileSync(file, "utf8"); } catch { return ""; }
   }
 
   /** Extract a display title from a codex rollout: first real user prompt (<=60) -> "Untitled". */
@@ -135,14 +166,15 @@ export class CodexStore implements SessionStore {
   }
 
   listSessions(projectPath: string): SessionMeta[] {
-    return this.scan()
+    return this.scanMeta()
       .filter((s) => s.cwd === projectPath)
       .map((s) => {
-        const turns = parseCodexHistory(s.text, 1);
+        const text = this.fullText(s.file);   // full read only for THIS project's own sessions
+        const turns = parseCodexHistory(text, 1);
         return {
           sessionId: s.threadId,
           lastActive: s.mtimeMs,
-          title: this.titleFrom(s.text),
+          title: text ? this.titleFrom(text) : "Untitled",
           preview: truncatePreview(turns.length ? turns[turns.length - 1]! : null),
         };
       });
@@ -150,9 +182,9 @@ export class CodexStore implements SessionStore {
 
   listProjects(): StoreProject[] {
     const byPath = new Map<string, StoreProject>();
-    for (const s of this.scan()) {
-      if (byPath.has(s.cwd)) continue; // newest-first scan: first hit wins
-      const turns = parseCodexHistory(s.text, 1);
+    for (const s of this.scanMeta()) {
+      if (byPath.has(s.cwd)) continue; // newest-first: first hit wins
+      const turns = parseCodexHistory(this.fullText(s.file), 1);  // one full read per project
       byPath.set(s.cwd, {
         path: s.cwd,
         lastSessionId: s.threadId,
@@ -165,49 +197,36 @@ export class CodexStore implements SessionStore {
 
   resolveResume(projectPath: string, resume: "latest" | "new" | string): string | undefined {
     if (resume === "new") return undefined;
-    if (resume === "latest") return this.scan().find((s) => s.cwd === projectPath)?.threadId;
+    if (resume === "latest") return this.scanMeta().find((s) => s.cwd === projectPath)?.threadId;
     return resume;
   }
 
   history(projectPath: string, resume: string, limit: number): HistoryItem[] {
     if (resume === "new") return [];
-    const all = this.scan();
-    // "latest" uses the project's newest thread; a specific id uses ONLY that
-    // thread. Never fall back to another thread in the project for a missing id
-    // — a brand-new session has no rollout yet, and on a reconnect the fallback
-    // would seed it with a different session's messages.
-    const match = resume === "latest"
-      ? all.find((s) => s.cwd === projectPath)
-      : all.find((s) => s.threadId === resume);
-    return match ? parseCodexHistory(match.text, limit) : [];
+    // A specific id reads ONLY that rollout (located by filename); "latest" picks
+    // the project's newest thread from a cheap meta scan. Never fall back to
+    // another thread for a missing id — a brand-new session has no rollout yet,
+    // and on a reconnect the fallback would seed it with a different session.
+    const file = resume === "latest"
+      ? this.scanMeta().find((s) => s.cwd === projectPath)?.file
+      : this.fileForId(resume);
+    return file ? parseCodexHistory(this.fullText(file), limit) : [];
   }
 
   deleteSession(_projectPath: string, sessionId: string): boolean {
-    const root = join(this.codexHome, "sessions");
-    if (!existsSync(root)) return false;
-    const walk = (dir: string): boolean => {
-      for (const entry of readdirSync(dir)) {
-        const p = join(dir, entry);
-        let st;
-        try { st = statSync(p); } catch { continue; }
-        if (st.isDirectory()) { if (walk(p)) return true; continue; }
-        if (!(entry.startsWith("rollout-") && entry.endsWith(".jsonl"))) continue;
-        let first: string;
-        try {
-          const text = readFileSync(p, "utf8");
-          const nl = text.indexOf("\n");
-          first = (nl >= 0 ? text.slice(0, nl) : text).trim();
-        } catch { continue; }
-        try {
-          const meta = JSON.parse(first) as { type?: string; payload?: { id?: string } };
-          if (meta.type === "session_meta" && meta.payload?.id === sessionId) {
-            unlinkSync(p);
-            return true;
-          }
-        } catch { continue; }
-      }
-      return false;
-    };
-    try { return walk(root); } catch { return false; }
+    // Match by the authoritative session_meta id (verify before unlinking), reading
+    // only first lines — not whole transcripts.
+    for (const { file } of this.rolloutFiles()) {
+      const first = firstLine(file);
+      if (!first) continue;
+      try {
+        const meta = JSON.parse(first) as { type?: string; payload?: { id?: string } };
+        if (meta.type === "session_meta" && meta.payload?.id === sessionId) {
+          unlinkSync(file);
+          return true;
+        }
+      } catch { continue; }
+    }
+    return false;
   }
 }
