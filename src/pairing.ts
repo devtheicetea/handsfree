@@ -11,16 +11,51 @@ export interface HostDeps {
 // Validate octet ranges (0-255), so `tailscale ip -4` garbage like "999.999.999.999" is rejected.
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
-/** The host's Tailscale IPv4 (`tailscale ip -4`), or null if Tailscale isn't available. */
+/**
+ * True for an address in Tailscale's CGNAT range 100.64.0.0/10
+ * (100.64.0.0 – 100.127.255.255), which every Tailscale node's IPv4 falls in.
+ */
+export function isTailscaleCGNAT(addr: string): boolean {
+  if (!IPV4.test(addr)) return false;
+  const parts = addr.split(".");
+  const a = Number(parts[0]);
+  const b = Number(parts[1]);
+  return a === 100 && b >= 64 && b <= 127;
+}
+
+/**
+ * Find the host's Tailscale IPv4 directly from its network interfaces, by
+ * scanning for a non-internal address in the CGNAT range. This is the fallback
+ * for when the `tailscale` CLI isn't on PATH — e.g. the macOS GUI app (App Store
+ * or direct download) keeps the CLI inside the app bundle, so `tailscale ip -4`
+ * fails with ENOENT even though the tunnel is up.
+ */
+export function tailscaleIPFromInterfaces(
+  ifaces: ReturnType<typeof networkInterfaces> = networkInterfaces(),
+): string | null {
+  for (const list of Object.values(ifaces)) {
+    for (const ni of list ?? []) {
+      if (ni.family === "IPv4" && !ni.internal && isTailscaleCGNAT(ni.address)) return ni.address;
+    }
+  }
+  return null;
+}
+
+/**
+ * The host's Tailscale IPv4. Tries the `tailscale ip -4` CLI first, then falls
+ * back to scanning network interfaces for the CGNAT range so detection still
+ * works when the CLI is unavailable. Null if Tailscale isn't running at all.
+ */
 export function tailscaleIP(): string | null {
   try {
     const out = execFileSync("tailscale", ["ip", "-4"], { encoding: "utf8", timeout: 2000 });
     // take the first IPv4 line; tailscale typically returns exactly one
     const first = out.split("\n").map((s) => s.trim()).find(Boolean);
-    return first && IPV4.test(first) ? first : null;
+    if (first && IPV4.test(first)) return first;
   } catch {
-    return null;
+    // CLI missing (not on PATH) or it errored — fall through to the interface scan.
   }
+  return tailscaleIPFromInterfaces();
 }
 
 /** The first non-internal IPv4 LAN address, or null. */

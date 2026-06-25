@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveHost, resolveHostInfo, reachabilityNote, buildPairURL, printPairing, type HostDeps } from "../src/pairing.js";
+import { resolveHost, resolveHostInfo, reachabilityNote, buildPairURL, printPairing, isTailscaleCGNAT, tailscaleIPFromInterfaces, type HostDeps } from "../src/pairing.js";
 
 const deps = (ts: string | null, lan: string | null): HostDeps => ({
   tailscaleIP: () => ts,
@@ -17,6 +17,45 @@ describe("resolveHost", () => {
   });
   it("ignores a blank override", () => {
     expect(resolveHost({ HANDSFREE_HOST: "  " }, deps("100.1.2.3", null))).toBe("100.1.2.3");
+  });
+});
+
+describe("isTailscaleCGNAT", () => {
+  it("matches addresses in 100.64.0.0/10", () => {
+    expect(isTailscaleCGNAT("100.64.0.1")).toBe(true);
+    expect(isTailscaleCGNAT("100.100.34.12")).toBe(true);   // typical tailscale address
+    expect(isTailscaleCGNAT("100.127.255.255")).toBe(true); // top of range
+  });
+  it("rejects addresses outside the CGNAT range", () => {
+    expect(isTailscaleCGNAT("100.63.255.255")).toBe(false); // just below
+    expect(isTailscaleCGNAT("100.128.0.0")).toBe(false);    // just above
+    expect(isTailscaleCGNAT("192.168.0.5")).toBe(false);
+    expect(isTailscaleCGNAT("10.0.0.1")).toBe(false);
+    expect(isTailscaleCGNAT("not-an-ip")).toBe(false);
+  });
+});
+
+describe("tailscaleIPFromInterfaces", () => {
+  it("finds the non-internal CGNAT address on a utun interface", () => {
+    const ifaces = {
+      lo0: [{ family: "IPv4", internal: true, address: "127.0.0.1" } as any],
+      en0: [{ family: "IPv4", internal: false, address: "192.168.0.5" } as any],
+      utun3: [{ family: "IPv4", internal: false, address: "100.100.34.12" } as any],
+    };
+    expect(tailscaleIPFromInterfaces(ifaces)).toBe("100.100.34.12");
+  });
+  it("returns null when no CGNAT address is present", () => {
+    const ifaces = {
+      en0: [{ family: "IPv4", internal: false, address: "192.168.0.5" } as any],
+    };
+    expect(tailscaleIPFromInterfaces(ifaces)).toBe(null);
+  });
+  it("ignores IPv6 and internal addresses", () => {
+    const ifaces = {
+      lo0: [{ family: "IPv4", internal: true, address: "100.100.0.1" } as any], // internal, skip
+      en0: [{ family: "IPv6", internal: false, address: "fd7a::1" } as any],     // v6, skip
+    };
+    expect(tailscaleIPFromInterfaces(ifaces)).toBe(null);
   });
 });
 
