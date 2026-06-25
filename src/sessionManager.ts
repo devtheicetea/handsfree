@@ -15,6 +15,14 @@ import { debugLog, preview } from "./debug.js";
 
 const HISTORY_LIMIT = 25;
 
+// Disconnect-teardown grace (all clients gone). The most-recently-active ("held") session
+// survives a long gap — the user likely just locked the phone and will return; other live
+// sessions are cleaned up quickly. A session with work in flight is NEVER stopped — re-checked
+// on WORK_RECHECK_MS until it settles. Spec: docs/superpowers/specs/2026-06-25-session-liveness-grace-design.md
+const HELD_GRACE_MS = 30 * 60_000;   // 30 min — the session the user is actually in
+const IDLE_GRACE_MS = 120_000;       // 2 min — older / background live sessions
+const WORK_RECHECK_MS = 30_000;      // re-poll a still-working session rather than kill it mid-task
+
 interface LiveSession {
   session: Session;
   policy: PermissionPolicy;
@@ -22,6 +30,8 @@ interface LiveSession {
   projectPath: string;
   agent: AgentName;
   resumeId: string | null;
+  /** Wall-clock of the last open/prompt — picks the "held" session on disconnect. */
+  lastActiveMs: number;
 }
 
 export interface SessionManagerDeps {
@@ -42,6 +52,8 @@ export interface SessionManagerDeps {
  */
 export class SessionManager {
   private readonly sessions = new Map<string, LiveSession>();
+  /** Pending per-session disconnect-teardown timers (cancelled on reconnect). */
+  private readonly stopTimers = new Map<string, NodeJS.Timeout>();
   private readonly safelist: string[];
   private readonly makeSession: (agent: AgentName, projectPath: string) => Session;
   private readonly stores: { claude: SessionStore; codex: SessionStore };
@@ -136,7 +148,7 @@ export class SessionManager {
     const savedMode = resumeId ? this.modeStore.get(agent, resumeId) : undefined;
     if (savedMode) policy.setMode(savedMode);
     const session = this.makeSession(agent, projectPath);
-    this.sessions.set(sessionKey, { session, policy, questions, projectPath, agent, resumeId });
+    this.sessions.set(sessionKey, { session, policy, questions, projectPath, agent, resumeId, lastActiveMs: Date.now() });
     toOpener({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
     this.tagged(sessionKey, toOpener)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
     await session.start({
@@ -216,6 +228,7 @@ export class SessionManager {
                                   origin: origin ?? "", text: preview(msg.text) });
         this.broadcast({ type: "user_message", sessionKey: msg.sessionKey, turn: ls.session.currentTurn + 1,
                          text: msg.text, attachments: msg.attachments, origin: origin ?? "" });
+        ls.lastActiveMs = Date.now();   // this is now the "held" session if the client drops
         ls.session.prompt(msg.text, msg.attachments);
         return true;
       case "abort": {
@@ -294,8 +307,50 @@ export class SessionManager {
   }
 
   async stopAll(): Promise<void> {
+    this.cancelGracefulStops();
     await Promise.all([...this.sessions.values()].map((ls) => ls.session.stop()));
     this.sessions.clear();
+  }
+
+  /** Last client disconnected: schedule per-session teardown instead of stopping everything at
+   *  once. The most-recently-active ("held") session gets HELD_GRACE_MS (the user likely just
+   *  locked the phone and will be back); the rest get IDLE_GRACE_MS. A session doing work is
+   *  never stopped — re-checked until it settles. cancelGracefulStops() aborts all of these on
+   *  reconnect. Idempotent: re-arming replaces the existing timers. */
+  scheduleGracefulStop(): void {
+    // The held session is the one most recently opened or prompted.
+    let heldKey: string | null = null;
+    let heldAt = -Infinity;
+    for (const [key, ls] of this.sessions) {
+      if (ls.lastActiveMs > heldAt) { heldAt = ls.lastActiveMs; heldKey = key; }
+    }
+    for (const key of this.sessions.keys()) {
+      this.scheduleStop(key, key === heldKey ? HELD_GRACE_MS : IDLE_GRACE_MS);
+    }
+  }
+
+  private scheduleStop(key: string, delayMs: number): void {
+    const existing = this.stopTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.stopTimers.delete(key);
+      const ls = this.sessions.get(key);
+      if (!ls) return;
+      if (ls.session.hasWorkInFlight) {
+        // Still producing output the user is waiting on — don't kill it mid-work; re-check soon.
+        this.scheduleStop(key, WORK_RECHECK_MS);
+        return;
+      }
+      void ls.session.stop();
+      this.sessions.delete(key);
+    }, delayMs);
+    this.stopTimers.set(key, timer);
+  }
+
+  /** A client reconnected: cancel all pending disconnect teardowns. */
+  cancelGracefulStops(): void {
+    for (const t of this.stopTimers.values()) clearTimeout(t);
+    this.stopTimers.clear();
   }
 
   /** Permanently delete a session: stop it if it's currently live, then remove its file. */

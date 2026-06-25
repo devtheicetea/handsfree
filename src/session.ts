@@ -200,6 +200,13 @@ export class Session {
     return this.active;
   }
 
+  /** True while there is output the user is still waiting on — a turn streaming OR a
+   *  background task pending. Used to DEFER disconnect teardown: a session doing work must
+   *  not be torn down out from under the agent just because the phone locked. */
+  get hasWorkInFlight(): boolean {
+    return this.busy || this.turnActive || this.pendingTasks.size > 0;
+  }
+
   /** The project path this session is running in (for idempotent re-open). */
   get project(): string {
     return this.projectPath;

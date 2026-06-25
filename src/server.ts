@@ -17,7 +17,6 @@ import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
 const VERSION = "0.8.0";
-const DISCONNECT_GRACE_MS = 120_000;
 const HISTORY_LIMIT = 25; // turns per view_session snapshot (matches the manager's open snapshot)
 
 export interface ServerDeps {
@@ -41,7 +40,6 @@ export class BridgeServer {
   private codexAvailable: boolean | null = null;
   private readonly clients = new ClientRegistry();
   private readonly sessions: SessionManager;
-  private disconnectTimer: NodeJS.Timeout | null = null;
   private readonly logger?: Logger;
   private readonly watcher: Pick<SessionWatcher, "start" | "stop">;
 
@@ -165,7 +163,7 @@ export class BridgeServer {
         const codex = await this.detectCodex();
         this.send(ws, { type: "hello_ok", version: VERSION, agents: { claude: true, codex } });
         helloDone = true;
-        if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
+        this.sessions.cancelGracefulStops();   // a client is back — abort any pending teardown
         this.logger?.info("hello", { clientId });
         // Catch this client up on every live session AND subscribe it to them.
         // Reattach diagnostics only in debug mode (HANDSFREE_ENV=debug).
@@ -185,12 +183,11 @@ export class BridgeServer {
     ws.on("close", () => {
       this.clients.remove(ws);
       if (this.clients.hasAny()) return;   // other clients still connected — keep sessions alive
-      if (this.disconnectTimer) clearTimeout(this.disconnectTimer);
-      this.disconnectTimer = setTimeout(() => {
-        this.logger?.info("all clients gone — stopping all sessions");
-        void this.sessions.stopAll();
-        this.disconnectTimer = null;
-      }, DISCONNECT_GRACE_MS);
+      // Per-session grace instead of stopping everything at once: the session the user is
+      // actually in survives a long gap (locked phone), work-in-flight is never killed, old
+      // sessions die quickly. See SessionManager.scheduleGracefulStop.
+      this.logger?.info("all clients gone — scheduling graceful per-session teardown");
+      this.sessions.scheduleGracefulStop();
     });
   }
 
@@ -285,8 +282,7 @@ export class BridgeServer {
 
   async close(): Promise<void> {
     this.watcher.stop();
-    if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = null; }
-    await this.sessions.stopAll();
+    await this.sessions.stopAll();   // also cancels any pending graceful-stop timers
     await new Promise<void>((resolve) => {
       if (!this.wss) return resolve();
       for (const c of this.wss.clients) c.terminate();

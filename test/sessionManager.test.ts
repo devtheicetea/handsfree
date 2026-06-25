@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +38,8 @@ class FakeSession {
   abortTurn() { this.aborts++; }
   async stop() { this.active = false; }
   isActive() { return this.active; }
+  workInFlight = false;
+  get hasWorkInFlight() { return this.workInFlight; }
   streaming = false;
   backendSessionId: string | null = null;
   get project() { return this.started?.projectPath ?? ""; }
@@ -75,6 +77,51 @@ describe("SessionManager", () => {
     const bResp = broadcast.find((x) => x.type === "response" && (x as any).text === "r:yo");
     expect((aResp as any).sessionKey).toBe(keyA);
     expect((bResp as any).sessionKey).toBe(keyB);
+  });
+
+  it("disconnect grace: the session you last used survives long; an idle one dies at the short grace", async () => {
+    vi.useFakeTimers();
+    try {
+      const { m, made } = mgr();
+      let keyA = "";
+      await m.open("/a", "claude", "new", "n1", (x) => { if (x.type === "session_started") keyA = (x as any).sessionKey; });
+      await m.open("/b", "claude", "new", "n2", () => {});
+      vi.advanceTimersByTime(1000);
+      m.route({ type: "prompt", sessionKey: keyA, text: "hi" } as any);   // A is now the most-recently-used
+      m.scheduleGracefulStop();
+      vi.advanceTimersByTime(121_000);            // past the 2-min idle grace
+      expect(made[1]!.active).toBe(false);        // B (idle) stopped
+      expect(made[0]!.active).toBe(true);         // A (held) survives
+      vi.advanceTimersByTime(30 * 60_000);        // past the 30-min held grace
+      expect(made[0]!.active).toBe(false);        // A now stopped too
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("disconnect grace: never stops a session with work in flight; stops it once settled", async () => {
+    vi.useFakeTimers();
+    try {
+      const { m, made } = mgr();
+      await m.open("/a", "claude", "new", "n1", () => {});
+      made[0]!.workInFlight = true;               // a background task / streaming turn
+      m.scheduleGracefulStop();
+      vi.advanceTimersByTime(30 * 60_000 + 30_000);   // past held grace + a re-check
+      expect(made[0]!.active).toBe(true);         // still working → never torn down
+      made[0]!.workInFlight = false;              // work settles
+      vi.advanceTimersByTime(30_000);             // next re-check
+      expect(made[0]!.active).toBe(false);        // now stopped
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("reconnect cancels a pending disconnect teardown", async () => {
+    vi.useFakeTimers();
+    try {
+      const { m, made } = mgr();
+      await m.open("/a", "claude", "new", "n1", () => {});
+      m.scheduleGracefulStop();
+      m.cancelGracefulStops();                    // a client came back
+      vi.advanceTimersByTime(60 * 60_000);        // well past any grace
+      expect(made[0]!.active).toBe(true);         // never stopped
+    } finally { vi.useRealTimers(); }
   });
 
   it("routes abort to the named session only", async () => {
