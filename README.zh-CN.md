@@ -111,7 +111,7 @@ flowchart LR
   [其他 VPN 常见问题](https://tailscale.com/docs/reference/faq/other-vpns)。
 
 或者干脆不用系统级 VPN，只把**桥接服务的出站 API 请求**走代理：Claude CLI 和 Codex 都遵循
-`HTTPS_PROXY` / `ALL_PROXY`，因此 `HTTPS_PROXY=… npx handsfree-bridge` 只会代理智能体流量，
+`HTTPS_PROXY` / `ALL_PROXY`，因此 `HTTPS_PROXY=… npx handsfree-bridge@latest` 只会代理智能体流量，
 而不影响 Tailscale。
 
 注意：如果另一个 VPN 是无法排除路由的全局（exit‑node 式）隧道，或它本身也使用
@@ -124,11 +124,11 @@ flowchart LR
 在运行你编程智能体的电脑上，启动桥接服务并让它保持运行：
 
 ```bash
-npx handsfree-bridge
+npx handsfree-bridge@latest
 ```
 
 需要 Node 20+，并已安装并登录你的编程智能体（见 [前置条件](#前置条件)）。可用
-[配置](#配置)中的环境变量进行配置，例如 `HANDSFREE_TOKEN=… npx handsfree-bridge`。
+[配置](#配置)中的环境变量进行配置，例如 `HANDSFREE_TOKEN=… npx handsfree-bridge@latest`。
 
 <details>
 <summary>或从源码运行</summary>

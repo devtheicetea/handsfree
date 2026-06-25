@@ -125,7 +125,7 @@ coexist:
 
 Alternatively, skip the system VPN entirely and send **only the bridge's
 outbound API calls** through a proxy: the Claude CLI and Codex honor
-`HTTPS_PROXY` / `ALL_PROXY`, so `HTTPS_PROXY=… npx handsfree-bridge` tunnels the
+`HTTPS_PROXY` / `ALL_PROXY`, so `HTTPS_PROXY=… npx handsfree-bridge@latest` tunnels the
 agent traffic while leaving Tailscale untouched.
 
 Caveats: this can't work if the other VPN is an exit‑node‑style full tunnel that
@@ -140,12 +140,12 @@ On the computer where your coding agent runs, start the bridge and leave it
 running:
 
 ```bash
-npx handsfree-bridge
+npx handsfree-bridge@latest
 ```
 
 Needs Node 20+, with your coding agent installed and logged in (see
 [Prerequisites](#prerequisites)). Configure it with the environment variables in
-[Configuration](#configuration), e.g. `HANDSFREE_TOKEN=… npx handsfree-bridge`.
+[Configuration](#configuration), e.g. `HANDSFREE_TOKEN=… npx handsfree-bridge@latest`.
 
 <details>
 <summary>Or run from source</summary>
