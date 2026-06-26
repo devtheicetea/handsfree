@@ -99,6 +99,7 @@ export function listClaudeProjects(claudeHome = defaultClaudeHome()): StoreProje
       lastSessionId: s.newest.sessionId,
       lastActive: s.newest.mtimeMs,
       lastMessage: previewFrom(s.newestText),
+      lastTitle: titleFrom(s.newestText),
     });
   }
   return out.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
@@ -114,7 +115,7 @@ export function mergeProjects(claude: StoreProject[], codex: StoreProject[]): Pr
       // sorted newest-first. Keep the newest; `>` lets the first entry win ties.
       const prev = info.agents[agent];
       if (!prev || (p.lastActive ?? 0) > (prev.lastActive ?? 0)) {
-        info.agents[agent] = { lastSessionId: p.lastSessionId, lastActive: p.lastActive, lastMessage: p.lastMessage };
+        info.agents[agent] = { lastSessionId: p.lastSessionId, lastActive: p.lastActive, lastMessage: p.lastMessage, lastTitle: p.lastTitle };
       }
       map.set(p.path, info);
     }

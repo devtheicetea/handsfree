@@ -184,12 +184,14 @@ export class CodexStore implements SessionStore {
     const byPath = new Map<string, StoreProject>();
     for (const s of this.scanMeta()) {
       if (byPath.has(s.cwd)) continue; // newest-first: first hit wins
-      const turns = parseCodexHistory(this.fullText(s.file), 1);  // one full read per project
+      const text = this.fullText(s.file);   // one full read per project
+      const turns = parseCodexHistory(text, 1);
       byPath.set(s.cwd, {
         path: s.cwd,
         lastSessionId: s.threadId,
         lastActive: s.mtimeMs,
         lastMessage: truncatePreview(turns.length ? turns[turns.length - 1]! : null),
+        lastTitle: text ? this.titleFrom(text) : null,
       });
     }
     return [...byPath.values()];

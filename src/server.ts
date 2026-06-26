@@ -3,7 +3,6 @@ import { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { parseClientMessage, encode, type BridgeToClient, type ClientMessage } from "./protocol.js";
 import { Session } from "./session.js";
-import { mergeProjects } from "./projects.js";
 import { SessionManager } from "./sessionManager.js";
 import { ClientRegistry } from "./clients.js";
 import { debugLog, isDebug } from "./debug.js";
@@ -194,7 +193,7 @@ export class BridgeServer {
   private async route(ws: WebSocket, msg: ClientMessage, clientId: string): Promise<void> {
     switch (msg.type) {
       case "list_projects":
-        this.send(ws, { type: "projects", projects: mergeProjects(this.stores.claude.listProjects(), this.stores.codex.listProjects()) });
+        this.send(ws, { type: "projects", projects: this.sessions.listProjects() });
         return;
       case "list_sessions": {
         this.logger?.info("list_sessions", { projectPath: msg.projectPath, agent: msg.agent });

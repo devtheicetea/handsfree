@@ -93,6 +93,7 @@ export type AgentSessionMeta = {
   lastSessionId: string | null;
   lastActive: number | null;
   lastMessage: HistoryItem | null;
+  lastTitle?: string | null;   // latest session's title (AI-derived or custom rename)
 };
 
 export type ProjectInfo = {
@@ -106,6 +107,10 @@ export type BridgeToClient =
   | { type: "projects"; projects: ProjectInfo[] }
   | { type: "sessions"; projectPath: string; agent: AgentName; sessions: SessionMeta[] }
   | { type: "session_started"; nonce: string; sessionKey: string; projectPath: string; agent: AgentName; resumeId: string; mode: PermissionModeName }
+  // Sent (without a nonce) for each still-live session on reattach, so a freshly-launched
+  // client — whose in-memory live-session map is gone — can recognize these as LIVE and
+  // open them directly instead of falling back to a read-only mirror.
+  | { type: "session_attached"; sessionKey: string; projectPath: string; agent: AgentName; resumeId: string }
   | { type: "status"; sessionKey: string; state: "thinking" | "idle" | "error" }
   // Background-task lifecycle, surfaced so the client can show WHICH task is running
   // ("⚙️ <description>…") and chime on completion. Incremental: started adds, settled

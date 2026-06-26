@@ -300,6 +300,13 @@ describe("SessionManager", () => {
 
     // reattachAllTo must NOT re-emit session_started (the manager already did on open)
     expect(replayed.filter((m) => m.type === "session_started")).toHaveLength(0);
+    // ...but it MUST announce the live session's identity via session_attached, so a
+    // cold-launched client (no in-memory live map) can open it live instead of as a mirror.
+    const attached = replayed.filter((m) => m.type === "session_attached") as any[];
+    expect(attached).toHaveLength(1);
+    expect(attached[0].sessionKey).toBe(openKey);
+    expect(attached[0].agent).toBe("codex");
+    expect(attached[0].projectPath).toBe("/Users/x/My Project");
     // it should re-emit a status tagged with the session's key
     const statuses = replayed.filter((m) => m.type === "status");
     expect(statuses.length).toBeGreaterThan(0);

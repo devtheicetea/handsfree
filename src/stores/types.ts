@@ -6,6 +6,7 @@ export interface StoreProject {
   lastSessionId: string | null;
   lastActive: number | null;
   lastMessage: HistoryItem | null;
+  lastTitle: string | null;   // title of the latest session (AI-derived; custom rename applied later)
 }
 
 /** One discoverable session for a project (newest-first in listings). */

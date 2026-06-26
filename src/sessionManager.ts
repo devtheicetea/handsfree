@@ -10,7 +10,8 @@ import type { AgentName } from "./backends/types.js";
 import type { SessionStore, SessionMeta } from "./stores/types.js";
 import { ClaudeStore } from "./stores/claude.js";
 import { CodexStore } from "./stores/codex.js";
-import type { BridgeToClient, ClientMessage } from "./protocol.js";
+import type { BridgeToClient, ClientMessage, ProjectInfo } from "./protocol.js";
+import { mergeProjects } from "./projects.js";
 import { debugLog, preview } from "./debug.js";
 
 const HISTORY_LIMIT = 25;
@@ -170,21 +171,24 @@ export class SessionManager {
     const keys: string[] = [];
     for (const [key, ls] of this.sessions) {
       if (ls.session.isActive()) {
+        const sid = ls.session.backendSessionId ?? ls.resumeId ?? "";
+        // Announce this session's IDENTITY first. A client that just cold-launched has lost
+        // its in-memory live-session map, so without this it can't tell that `key` is the live
+        // backing for on-disk session `sid` and would open a read-only mirror instead of
+        // attaching live. (No nonce: this is unsolicited, not the reply to an open/view.)
+        emit({ type: "session_attached", sessionKey: key, projectPath: ls.projectPath, agent: ls.agent, resumeId: sid } as BridgeToClient);
         ls.session.replayTo(this.tagged(key, emit));
         this.replayPending(key, ls, emit);
         // If no turn is in flight, replayTo can't recover a reply that completed
         // while this client was disconnected (e.g. phone backgrounded mid-stream).
         // Send an authoritative history snapshot so the client catches up.
         const streaming = ls.session.streaming;
-        let sentHistory = false, itemCount = 0, sid = "";
-        if (!streaming) {
-          sid = ls.session.backendSessionId ?? ls.resumeId ?? "";
-          if (sid) {
-            const items = this.stores[ls.agent].history(ls.projectPath, sid, HISTORY_LIMIT);
-            itemCount = items.length;
-            sentHistory = true;
-            this.tagged(key, emit)({ type: "history", items } as BridgeToClient);
-          }
+        let sentHistory = false, itemCount = 0;
+        if (!streaming && sid) {
+          const items = this.stores[ls.agent].history(ls.projectPath, sid, HISTORY_LIMIT);
+          itemCount = items.length;
+          sentHistory = true;
+          this.tagged(key, emit)({ type: "history", items } as BridgeToClient);
         }
         log?.("reattach", { key, streaming, sentHistory, itemCount, sid });
         keys.push(key);
@@ -291,6 +295,23 @@ export class SessionManager {
       const name = this.nameStore.get(agent, s.sessionId);
       return name ? { ...s, title: name } : s;
     });
+  }
+
+  /** Projects across both agents, with each project's latest-session title resolved (a custom
+   *  rename name overrides the AI-derived title) so the client's session switcher shows the
+   *  same titles as the session list. */
+  listProjects(): ProjectInfo[] {
+    const projects = mergeProjects(this.stores.claude.listProjects(), this.stores.codex.listProjects());
+    for (const p of projects) {
+      for (const agent of ["claude", "codex"] as AgentName[]) {
+        const a = p.agents[agent];
+        if (a?.lastSessionId) {
+          const name = this.nameStore.get(agent, a.lastSessionId);
+          if (name) a.lastTitle = name;
+        }
+      }
+    }
+    return projects;
   }
 
   /** Folder + session id for a sessionKey — used to tag broadcast debug logs. */
