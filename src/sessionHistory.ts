@@ -87,3 +87,28 @@ export function lastTurn(jsonlText: string): HistoryItem | null {
   const items = parseHistory(jsonlText, 1);
   return items.length ? items[items.length - 1]! : null;
 }
+
+/**
+ * Wall-clock ms of the session's most recent *real* turn (a timestamped user or
+ * assistant entry), or null if none is parseable.
+ *
+ * Why not the file mtime: the SDK appends metadata records — ai-title, mode,
+ * permission-mode, last-prompt, file-history-snapshot — that carry NO `timestamp`
+ * yet still bump the file's modified time. A reattach / title-generation can write
+ * one hours after the last message, so mtime overstates recency ("15m ago" when the
+ * last real turn was hours back). Reading the last timestamped turn fixes that.
+ */
+export function lastTurnMs(jsonlText: string): number | null {
+  let best: number | null = null;
+  for (const raw of jsonlText.split("\n")) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    let o: { type?: string; timestamp?: unknown };
+    try { o = JSON.parse(trimmed) as { type?: string; timestamp?: unknown }; } catch { continue; }
+    if (o.type !== "user" && o.type !== "assistant") continue;
+    if (typeof o.timestamp !== "string") continue;
+    const ms = Date.parse(o.timestamp);
+    if (!Number.isNaN(ms) && (best === null || ms > best)) best = ms;
+  }
+  return best;
+}

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { CodexStore, parseCodexHistory } from "../src/stores/codex.js";
+import { CodexStore, parseCodexHistory, lastCodexTurnMs } from "../src/stores/codex.js";
 
 const meta = (id: string, cwd: string) =>
   JSON.stringify({ timestamp: "2026-06-11T10:00:00.000Z", type: "session_meta", payload: { id, timestamp: "2026-06-11T10:00:00.000Z", cwd, originator: "codex_cli_rs", cli_version: "0.99.0" } });
@@ -112,5 +112,44 @@ describe("CodexStore", () => {
     const store = new CodexStore(join(home, "missing"));
     expect(store.listProjects()).toEqual([]);
     expect(store.history("/x", "latest", 5)).toEqual([]);
+  });
+});
+
+describe("lastCodexTurnMs", () => {
+  const tsMsg = (ts: string, role: "user" | "assistant", text: string) =>
+    JSON.stringify({ timestamp: ts, type: "response_item",
+      payload: { type: "message", role, content: [{ type: role === "user" ? "input_text" : "output_text", text }] } });
+  const T1 = "2026-06-11T10:00:00.000Z";
+  const T2 = "2026-06-11T10:05:00.000Z";
+
+  it("returns the most recent real turn's timestamp", () => {
+    const jsonl = [tsMsg(T1, "user", "add a test"), tsMsg(T2, "assistant", "done")].join("\n");
+    expect(lastCodexTurnMs(jsonl)).toBe(Date.parse(T2));
+  });
+
+  it("ignores trailing non-turn records that bump mtime (token_count, task_complete, turn_context, reasoning)", () => {
+    const jsonl = [
+      tsMsg(T1, "user", "add a test"),
+      tsMsg(T2, "assistant", "done"),
+      // All written AFTER the last message — must NOT count as activity.
+      JSON.stringify({ timestamp: "2026-06-11T10:09:00.000Z", type: "response_item", payload: { type: "reasoning", summary: [] } }),
+      JSON.stringify({ timestamp: "2026-06-11T10:09:01.000Z", type: "event_msg", payload: { type: "token_count" } }),
+      JSON.stringify({ timestamp: "2026-06-11T10:09:02.000Z", type: "event_msg", payload: { type: "task_complete" } }),
+      JSON.stringify({ timestamp: "2026-06-11T10:09:03.000Z", type: "turn_context", payload: {} }),
+    ].join("\n");
+    expect(lastCodexTurnMs(jsonl)).toBe(Date.parse(T2));
+  });
+
+  it("skips injected-context user messages", () => {
+    const jsonl = [
+      tsMsg(T2, "assistant", "ready"),
+      tsMsg("2026-06-11T10:10:00.000Z", "user", "<environment_context>injected</environment_context>"),
+    ].join("\n");
+    expect(lastCodexTurnMs(jsonl)).toBe(Date.parse(T2));   // the injected turn doesn't advance it
+  });
+
+  it("returns null when there is no real turn (caller falls back to mtime)", () => {
+    expect(lastCodexTurnMs("")).toBeNull();
+    expect(lastCodexTurnMs(JSON.stringify({ timestamp: T1, type: "session_meta", payload: { id: "x" } }))).toBeNull();
   });
 });

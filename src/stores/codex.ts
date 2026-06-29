@@ -71,6 +71,40 @@ export function parseCodexHistory(jsonlText: string, limit: number): HistoryItem
   return items.slice(-limit);
 }
 
+/**
+ * Wall-clock ms of the rollout's most recent *real* turn, or null if none.
+ *
+ * Mirrors `lastTurnMs` for Claude: the rollout's file mtime tracks the last *write*,
+ * which is routinely a non-turn record the codex CLI appends after the final
+ * message — `event_msg/token_count`, `event_msg/task_complete`, `turn_context`,
+ * `response_item/reasoning` — so mtime overstates recency. Read the timestamp of the
+ * last real turn instead: a `response_item` that is a (non-injected) user/assistant
+ * message or a tool call — exactly what `parseCodexHistory` counts as a turn.
+ */
+export function lastCodexTurnMs(jsonlText: string): number | null {
+  let best: number | null = null;
+  for (const raw of jsonlText.split("\n")) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    let o: CodexLine & { timestamp?: unknown };
+    try { o = JSON.parse(trimmed) as CodexLine & { timestamp?: unknown }; } catch { continue; }
+    if (o.type !== "response_item" || !o.payload) continue;
+    const p = o.payload;
+    const isTool = p.type === "function_call" || p.type === "local_shell_call";
+    const isAssistantMsg = p.type === "message" && p.role === "assistant";
+    const isUserMsg = p.type === "message" && p.role === "user";
+    if (!isTool && !isAssistantMsg && !isUserMsg) continue;
+    if (isUserMsg) {
+      const t = blockText(p.content, "input_text");
+      if (t === null || SKIP_USER_PREFIXES.some((s) => t.startsWith(s))) continue;   // injected context, not a real turn
+    }
+    if (typeof o.timestamp !== "string") continue;
+    const ms = Date.parse(o.timestamp);
+    if (!Number.isNaN(ms) && (best === null || ms > best)) best = ms;
+  }
+  return best;
+}
+
 interface ScannedMeta {
   threadId: string;
   cwd: string;
@@ -173,7 +207,7 @@ export class CodexStore implements SessionStore {
         const turns = parseCodexHistory(text, 1);
         return {
           sessionId: s.threadId,
-          lastActive: s.mtimeMs,
+          lastActive: lastCodexTurnMs(text) ?? s.mtimeMs,
           title: text ? this.titleFrom(text) : "Untitled",
           preview: truncatePreview(turns.length ? turns[turns.length - 1]! : null),
         };
@@ -189,7 +223,7 @@ export class CodexStore implements SessionStore {
       byPath.set(s.cwd, {
         path: s.cwd,
         lastSessionId: s.threadId,
-        lastActive: s.mtimeMs,
+        lastActive: lastCodexTurnMs(text) ?? s.mtimeMs,
         lastMessage: truncatePreview(turns.length ? turns[turns.length - 1]! : null),
         lastTitle: text ? this.titleFrom(text) : null,
       });

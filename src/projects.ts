@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import type { AgentName } from "./backends/types.js";
 import type { ProjectInfo } from "./protocol.js";
 import type { StoreProject, SessionMeta } from "./stores/types.js";
-import { lastTurn, parseHistory, type HistoryItem } from "./sessionHistory.js";
+import { lastTurn, lastTurnMs, parseHistory, type HistoryItem } from "./sessionHistory.js";
 
 export function defaultClaudeHome(): string {
   return join(homedir(), ".claude");
@@ -97,7 +97,9 @@ export function listClaudeProjects(claudeHome = defaultClaudeHome()): StoreProje
     out.push({
       path: s.cwd,
       lastSessionId: s.newest.sessionId,
-      lastActive: s.newest.mtimeMs,
+      // Last real turn's timestamp, not the file mtime — metadata writes (ai-title,
+      // mode, permission-mode) bump mtime without being a turn. Fall back to mtime.
+      lastActive: lastTurnMs(s.newestText) ?? s.newest.mtimeMs,
       lastMessage: previewFrom(s.newestText),
       lastTitle: titleFrom(s.newestText),
     });
@@ -234,7 +236,7 @@ export function listSessionsFor(claudeHome: string, projectPath: string): Sessio
     if (!scan || scan.cwd !== projectPath) continue;
     return scan.sessions.map((s) => {
       const text = readSafe(s.file) ?? "";
-      return { sessionId: s.sessionId, lastActive: s.mtimeMs, title: titleFrom(text), preview: previewFrom(text) };
+      return { sessionId: s.sessionId, lastActive: lastTurnMs(text) ?? s.mtimeMs, title: titleFrom(text), preview: previewFrom(text) };
     });
   }
   return [];

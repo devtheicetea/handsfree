@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseHistory, lastTurn } from "../src/sessionHistory.js";
+import { parseHistory, lastTurn, lastTurnMs } from "../src/sessionHistory.js";
 
 const line = (o: unknown) => JSON.stringify(o);
 
@@ -84,5 +84,38 @@ describe("parseHistory", () => {
     const jsonl = line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", name: "Read", input: {} }] } });
     expect(lastTurn(jsonl)).toEqual({ role: "assistant", text: "", tools: ["Read"] });
     expect(lastTurn("")).toBeNull();
+  });
+});
+
+describe("lastTurnMs", () => {
+  const T1 = "2026-06-29T10:00:00.000Z";
+  const T2 = "2026-06-29T10:05:00.000Z";
+
+  it("returns the most recent real turn's timestamp", () => {
+    const jsonl = [
+      line({ type: "user", timestamp: T1, message: { role: "user", content: "hi" } }),
+      line({ type: "assistant", timestamp: T2, message: { role: "assistant", content: [{ type: "text", text: "yo" }] } }),
+    ].join("\n");
+    expect(lastTurnMs(jsonl)).toBe(Date.parse(T2));
+  });
+
+  it("ignores trailing metadata records that have no timestamp (the mtime bug)", () => {
+    const jsonl = [
+      line({ type: "user", timestamp: T1, message: { role: "user", content: "hi" } }),
+      line({ type: "assistant", timestamp: T2, message: { role: "assistant", content: [{ type: "text", text: "done" }] } }),
+      // Written on reattach / title-gen hours later — no timestamp, bumps mtime only.
+      line({ type: "ai-title", aiTitle: "Paywall" }),
+      line({ type: "mode", mode: "safelist" }),
+      line({ type: "permission-mode" }),
+      line({ type: "file-history-snapshot" }),
+    ].join("\n");
+    expect(lastTurnMs(jsonl)).toBe(Date.parse(T2));
+  });
+
+  it("returns null when there is no timestamped turn (caller falls back to mtime)", () => {
+    expect(lastTurnMs("")).toBeNull();
+    expect(lastTurnMs(line({ type: "mode", mode: "safelist" }))).toBeNull();
+    // user/assistant without a timestamp -> null (don't invent a time)
+    expect(lastTurnMs(line({ type: "assistant", message: { role: "assistant", content: [] } }))).toBeNull();
   });
 });
