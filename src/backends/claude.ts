@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Pushable } from "../pushable.js";
 import { awaitSessionFile } from "../sessionFile.js";
 import { formatAnswers, type Question } from "../questions.js";
+import { debugLog } from "../debug.js";
 import type { AgentBackend, AgentEvent, BackendStartOpts, ImageAttachment } from "./types.js";
 
 export type QueryFn = (params: {
@@ -150,18 +151,42 @@ export class ClaudeBackend implements AgentBackend {
           // immediately and the turn continues, but the task keeps running and
           // settles later via task_notification. SDKTaskStartedMessage.
           const m = msg as { task_id: string; description?: string };
+          debugLog("sdk.task_started", { taskId: m.task_id, desc: m.description ?? "" });
           yield { kind: "task_started", taskId: m.task_id, description: m.description ?? "" };
         } else if (msg.type === "system" && subtype === "task_notification") {
           // The background task settled. SDKTaskNotificationMessage.
           const m = msg as { task_id: string; status?: string; summary?: string };
+          debugLog("sdk.task_notification", { taskId: m.task_id, status: m.status ?? "completed" });
           yield { kind: "task_settled", taskId: m.task_id, status: m.status ?? "completed", summary: m.summary ?? "" };
         } else if (msg.type === "stream_event") {
           const ev = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
           if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
             yield { kind: "text_delta", text: ev.delta.text };
           }
+        } else if (msg.type === "user") {
+          // A background task's completion is ALSO injected as a `<task-notification>` user turn
+          // carrying <task-id>. The SDK `task_notification` system message fires for Bash
+          // background tasks but appears NOT to for background AGENTS (Task tool) — settle off
+          // this too. Logged so the next repro confirms the id matches the task_started.
+          const content = (msg as { message?: { content?: unknown } }).message?.content;
+          let text = "";
+          if (typeof content === "string") text = content;
+          else if (Array.isArray(content)) {
+            for (const b of content as Array<{ type?: string; text?: string }>) if (b?.type === "text" && b.text) text += b.text + "\n";
+          }
+          const tn = text.match(/<task-notification>[\s\S]*?<task-id>\s*([^<\s]+)\s*<\/task-id>/i);
+          if (tn) {
+            debugLog("sdk.task_notification_user", { taskId: tn[1] });
+            yield { kind: "task_settled", taskId: tn[1]!, status: "completed", summary: "" };
+          }
         } else if (msg.type === "result") {
           yield { kind: "turn_done" };
+        } else {
+          // Instrumentation for the stuck-background-agent bug: surface any message carrying a
+          // task_id or an unhandled `system` subtype, so a repro reveals exactly how a background
+          // AGENT signals completion vs a background Bash command.
+          const a = msg as { type?: string; subtype?: string; task_id?: string };
+          if (a.task_id || a.type === "system") debugLog("sdk.unhandled", { type: a.type, subtype: a.subtype ?? null, taskId: a.task_id ?? null });
         }
       }
     } catch (err) {

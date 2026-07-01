@@ -9,6 +9,11 @@ import { debugLog, preview } from "./debug.js";
 // idle — and a premature "your turn" — in the gap before that reply's first token.
 // A starting turn cancels the wait. Only the rare no-follow-up settle waits it out.
 const SETTLE_IDLE_DEBOUNCE_MS = 3000;
+/** Hard cap on how long a background task may keep the session "working" without a settle
+ *  signal — a backstop against a stuck ⚙️ indicator (root cause: background AGENTS / Task-tool
+ *  run_in_background don't emit the SDK `task_notification` that Bash background tasks do).
+ *  Generous so a legit long-running task is never cut short. */
+const MAX_TASK_MS = 10 * 60 * 1000;
 
 export interface StartParams {
   projectPath: string;
@@ -47,6 +52,8 @@ export class Session {
    *  instead of flipping to idle the moment the turn ends. NOT yet wired into the
    *  emitted status (deferred — see backlog #12). */
   private readonly pendingTasks = new Map<string, string>();
+  /** Per-task force-settle timers (MAX_TASK_MS backstop) — cleared on real settle / shutdown. */
+  private readonly taskTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** True while text is ACTIVELY streaming (a turn is generating) — distinct from
    *  currentStatus, which now also reads "thinking" while a background task is
    *  pending but nothing is streaming. Reattach/replay keys off this, NOT the
@@ -114,10 +121,16 @@ export class Session {
             this.pendingTasks.set(ev.taskId, ev.description);
             debugLog("task.started", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, desc: ev.description, pending: this.pendingTasks.size });
             if (this.settleIdleTimer) { clearTimeout(this.settleIdleTimer); this.settleIdleTimer = null; }
+            // Backstop: force-settle if no settle signal ever arrives (see MAX_TASK_MS).
+            const existing = this.taskTimers.get(ev.taskId);
+            if (existing) clearTimeout(existing);
+            this.taskTimers.set(ev.taskId, setTimeout(() => this.forceSettleTask(ev.taskId), MAX_TASK_MS));
             this.send({ type: "task_started", id: ev.taskId, description: ev.description } as any);
             if (this.currentStatus !== "thinking") this.send({ type: "status", state: "thinking" } as any);
           } else if (ev.kind === "task_settled") {
             this.pendingTasks.delete(ev.taskId);
+            const timer = this.taskTimers.get(ev.taskId);
+            if (timer) { clearTimeout(timer); this.taskTimers.delete(ev.taskId); }
             debugLog("task.settled", { folder: this.projectPath, session: this.sessionId ?? "", taskId: ev.taskId, status: ev.status, pending: this.pendingTasks.size });
             this.send({ type: "task_settled", id: ev.taskId, status: ev.status } as any);
             // Turn's over and nothing left pending -> go idle, but debounce so an
@@ -135,6 +148,8 @@ export class Session {
         this.turnActive = false;
         this.pendingPrompts = [];
         this.pendingTasks.clear();
+        for (const t of this.taskTimers.values()) clearTimeout(t);
+        this.taskTimers.clear();
         if (this.settleIdleTimer) { clearTimeout(this.settleIdleTimer); this.settleIdleTimer = null; }
       }
     })();
@@ -168,6 +183,20 @@ export class Session {
     this.turnNo += 1;
     this.turnBuffer = [];
     if (this.currentStatus !== "thinking") this.send({ type: "status", state: "thinking" } as any);
+  }
+
+  /** Backstop for a task that never delivered a settle signal (see MAX_TASK_MS): sweep it so
+   *  the "working" indicator can't spin forever. A late real settle then finds nothing pending
+   *  and is a harmless no-op. Root cause: background AGENTS don't emit the SDK task_notification
+   *  that Bash background tasks do — this guarantees eventual recovery regardless of task type. */
+  private forceSettleTask(taskId: string): void {
+    this.taskTimers.delete(taskId);
+    if (!this.pendingTasks.has(taskId)) return;
+    const desc = this.pendingTasks.get(taskId) ?? "";
+    this.pendingTasks.delete(taskId);
+    debugLog("task.swept", { folder: this.projectPath, session: this.sessionId ?? "", taskId, desc, pending: this.pendingTasks.size });
+    this.send({ type: "task_settled", id: taskId, status: "swept" } as any);
+    if (!this.turnActive && this.pendingTasks.size === 0) this.scheduleIdleAfterSettle();
   }
 
   /** Report idle a short moment after a task settles, unless a turn starts first
@@ -205,6 +234,12 @@ export class Session {
    *  not be torn down out from under the agent just because the phone locked. */
   get hasWorkInFlight(): boolean {
     return this.busy || this.turnActive || this.pendingTasks.size > 0;
+  }
+
+  /** Current thinking/idle/error status — read by the manager to compute the per-session
+   *  status bucket it fans out to all clients (the session-list status dot). */
+  get status(): "thinking" | "idle" | "error" {
+    return this.currentStatus;
   }
 
   /** The project path this session is running in (for idempotent re-open). */

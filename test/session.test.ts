@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Session } from "../src/session.js";
 import { PermissionPolicy } from "../src/permissions.js";
 import type { BridgeToClient } from "../src/protocol.js";
@@ -245,6 +245,30 @@ describe("Session (backend-agnostic shell)", () => {
     await tick();
     expect(session.hasPendingTasks).toBe(false);
     await session.stop();
+  });
+
+  it("force-settles a background task that never delivers a settle signal (stuck-⚙️ backstop)", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = new FakeBackend();
+      const emitted: BridgeToClient[] = [];
+      const session = new Session(backend);
+      void session.start({ projectPath: "/p", resume: undefined, policy: policy(), emit: (m) => emitted.push(m) });
+      await vi.advanceTimersByTimeAsync(0);
+      // A background task starts and the turn ends, but NO settle ever arrives (the background
+      // AGENT / Task-tool bug — its completion isn't an SDK task_notification).
+      backend.events.push({ kind: "task_started", taskId: "t1", description: "Research OpenClaw" });
+      backend.events.push({ kind: "turn_done" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(session.hasPendingTasks).toBe(true);
+      // Past the cap → the backstop sweeps it so the "working" indicator can't spin forever.
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100);
+      expect(session.hasPendingTasks).toBe(false);
+      const swept = emitted.filter((m) => (m as { type: string }).type === "task_settled") as Array<{ id: string; status: string }>;
+      expect(swept.some((m) => m.id === "t1" && m.status === "swept")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("treats an SDK auto-continuation after a task settles as its own fresh turn", async () => {
