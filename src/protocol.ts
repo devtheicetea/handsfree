@@ -65,6 +65,18 @@ export const holdSessionSchema = z.object({
 });
 export const releaseSessionSchema = z.object({ type: z.literal("session_release"), sessionKey: z.string().min(1) });
 
+// Paginated "load earlier": fetch the last `limit` turns of a session — a GROWING window the
+// client re-requests with a bigger `limit` each time the user scrolls to the top. Addressed by
+// (agent, sessionId) so it works for live AND mirror sessions. Backward-compatible: older
+// clients never send this, and the bridge only emits `history_page` in response to it.
+export const loadHistorySchema = z.object({
+  type: z.literal("load_history"),
+  projectPath: z.string().min(1),
+  agent: agentSchema,
+  sessionId: z.string().min(1),
+  limit: z.number().int().positive().max(2000),
+});
+
 export const clientMessageSchema = z.discriminatedUnion("type", [
   helloSchema,
   listProjectsSchema,
@@ -83,6 +95,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   diagSchema,
   holdSessionSchema,
   releaseSessionSchema,
+  loadHistorySchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -123,11 +136,22 @@ export type BridgeToClient =
   | { type: "question_resolved"; sessionKey: string; id: string }
   | { type: "user_message"; sessionKey: string; turn: number; text: string; attachments?: { mime: string; dataBase64: string }[]; origin: string }
   | { type: "permission_resolved"; sessionKey: string; id: string }
-  | { type: "history"; sessionKey: string; items: HistoryItem[] }
+  // `hasMore` (optional, additive): older turns exist before this window — the client offers
+  // "load earlier" and re-requests via load_history. Absent on old bridges → client sees no
+  // pagination (backward-compatible).
+  | { type: "history"; sessionKey: string; items: HistoryItem[]; hasMore?: boolean }
   // v0.4.0 mirroring (no sessionKey — these address sessions by (agent, sessionId)):
-  | { type: "session_history"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[]; mode?: PermissionModeName }
+  | { type: "session_history"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[]; mode?: PermissionModeName; hasMore?: boolean }
+  // Response to a load_history request: a larger window for an already-open session. Only ever
+  // sent in reply to load_history, so old clients (which never send it) never receive it.
+  | { type: "history_page"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[]; hasMore: boolean }
   | { type: "external_turns"; projectPath: string; agent: AgentName; sessionId: string; items: HistoryItem[] }
   | { type: "session_activity"; projectPath: string; agent: AgentName; sessionId: string; lastActive: number; preview: HistoryItem | null }
+  // Per-session status fanout (broadcast to ALL clients) so every client's session list can show
+  // a live status dot, not just the one viewing the session. "waiting" = a permission/question is
+  // pending (act now); "working" = a turn is streaming or a background task is running. Only LIVE
+  // (bridge-hosted) sessions report this; mirrored laptop-only sessions stay absent → idle.
+  | { type: "session_status"; agent: AgentName; sessionId: string; status: "waiting" | "working" | "idle" | "error" }
   | { type: "error"; sessionKey?: string; code: string; message: string };
 
 // ---------- parsing ----------

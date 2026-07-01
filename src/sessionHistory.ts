@@ -2,6 +2,10 @@ export interface HistoryItem {
   role: "user" | "assistant";
   text: string;
   tools: string[];
+  /** Number of images the user attached to this turn. The image bytes are NOT shipped
+   *  (they'd bloat the snapshot); the client renders this many placeholders so a
+   *  laptop-attached image is at least visible as "an image was here". */
+  images?: number;
 }
 
 // Claude session files interleave metadata and tool plumbing with the conversation.
@@ -11,6 +15,15 @@ const SKIP_TYPES = new Set(["last-prompt", "mode", "permission-mode", "attachmen
 // minimal shape — only the fields the parser reads
 interface ContentBlock { type?: string; text?: string; name?: string }
 interface RawEntry { type?: string; promptSource?: string; message?: { role?: string; content?: unknown } }
+
+/** Count image attachment blocks in a message's content (Anthropic stores each attached
+ *  image as a `{type:"image", source:{…}}` block alongside the text block). */
+function countImages(content: unknown): number {
+  if (!Array.isArray(content)) return 0;
+  let n = 0;
+  for (const b of content as ContentBlock[]) if (b?.type === "image") n++;
+  return n;
+}
 
 /** Extract a real user message's text, or null if the entry is a tool_result (not a typed message). */
 function userText(content: unknown): string | null {
@@ -25,12 +38,24 @@ function userText(content: unknown): string | null {
   return null;
 }
 
+/** Claude Code injects a slash-command invocation as a user-role turn:
+ *  `<command-name>/voice</command-name><command-message>…</command-message><command-args>…</command-args>`.
+ *  Convert it to a tidy "/voice" so the chat shows the command, not raw XML. Returns null when the
+ *  turn isn't a command invocation. Anchored to the START of the text so an (assistant) turn that
+ *  merely mentions "<command-name>" in prose is never rewritten. */
+function slashCommandName(head: string): string | null {
+  const m = head.match(/^<command-name>\s*([^<]+?)\s*<\/command-name>/);
+  if (!m) return null;
+  const name = m[1]!.trim().replace(/^\/+/, "");
+  return name ? "/" + name : null;
+}
+
 /**
- * Parse a Claude Code session `.jsonl` into the last `limit` conversation turns.
+ * Parse ALL conversation turns from a Claude Code session `.jsonl`.
  * User turns are real typed messages; assistant turns coalesce consecutive
  * assistant entries' text plus the (deduped) names of any tools they used.
  */
-export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
+function parseAll(jsonlText: string): HistoryItem[] {
   const items: HistoryItem[] = [];
   let text: string[] = [];
   let toolSet = new Set<string>();
@@ -51,21 +76,34 @@ export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
     if (!t || SKIP_TYPES.has(t)) continue;
 
     if (t === "user") {
-      const ut = userText(o.message?.content);
-      if (ut === null) continue;        // tool_result -> part of the assistant turn
+      const content = o.message?.content;
+      const ut = userText(content);
+      const imgs = countImages(content);
+      // tool_result with no text AND no image -> part of the assistant turn. A turn with
+      // image block(s) is a real user attachment (even with no text), so don't skip it.
+      if (ut === null && imgs === 0) continue;
       // Harness-injected plumbing (task notifications, system reminders) is fed to
       // the model as a user turn — NOT something the person typed. It's tagged
       // promptSource "system" OR "sdk" inconsistently (the latter is identical to a
       // real prompt), so the reliable tell is the wrapper tag in the content: a real
       // prompt never starts with one. Skip so the raw XML never renders as a bubble.
       // flush() first so the two real turns it sits between stay separate.
-      const head = ut.trimStart();
-      if (o.promptSource === "system" || head.startsWith("<task-notification>") || head.startsWith("<system-reminder>")) {
+      const head = (ut ?? "").trimStart();
+      // Model-only plumbing fed as a user turn — NEVER something the person typed. Skip so the
+      // raw XML never renders as a bubble: task notifications, system reminders, and the
+      // local-command caveat ("Caveat: …DO NOT respond…") that Claude Code injects before a
+      // slash command runs. flush() first so the two real turns it sits between stay separate.
+      if (o.promptSource === "system"
+          || head.startsWith("<task-notification>")
+          || head.startsWith("<system-reminder>")
+          || head.startsWith("<local-command-caveat>")) {
         flush();
         continue;
       }
       flush();
-      items.push({ role: "user", text: ut, tools: [] });
+      // A slash-command invocation (`<command-name>/voice</command-name>…`) shows as a tidy "/voice".
+      const slash = slashCommandName(head);
+      items.push({ role: "user", text: slash ?? (ut ?? ""), tools: [], ...(imgs > 0 ? { images: imgs } : {}) });
     } else if (t === "assistant") {
       open = true;
       const content = o.message?.content;
@@ -79,7 +117,22 @@ export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
     }
   }
   flush();
-  return items.slice(-limit);
+  return items;
+}
+
+/** The last `limit` conversation turns (the tail of the session). */
+export function parseHistory(jsonlText: string, limit: number): HistoryItem[] {
+  return parseAll(jsonlText).slice(-limit);
+}
+
+/**
+ * The last `limit` turns PLUS whether older turns exist before this window — the signal
+ * the client uses to offer "load earlier" pagination. Shipped to the client as an optional
+ * `hasMore` field so pre-pagination clients simply ignore it (backward-compatible).
+ */
+export function parseHistoryWindow(jsonlText: string, limit: number): { items: HistoryItem[]; hasMore: boolean } {
+  const all = parseAll(jsonlText);
+  return { items: all.slice(-limit), hasMore: all.length > limit };
 }
 
 /** The most recent turn, or null for an empty/unparseable session. */

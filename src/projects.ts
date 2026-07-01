@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import type { AgentName } from "./backends/types.js";
 import type { ProjectInfo } from "./protocol.js";
 import type { StoreProject, SessionMeta } from "./stores/types.js";
-import { lastTurn, lastTurnMs, parseHistory, type HistoryItem } from "./sessionHistory.js";
+import { lastTurn, lastTurnMs, parseHistoryWindow, type HistoryItem } from "./sessionHistory.js";
 
 export function defaultClaudeHome(): string {
   return join(homedir(), ".claude");
@@ -137,10 +137,11 @@ export function historyForProject(
   projectPath: string,
   resume: string,
   limit: number,
-): HistoryItem[] {
-  if (resume === "new") return [];
+): { items: HistoryItem[]; hasMore: boolean } {
+  const empty = { items: [] as HistoryItem[], hasMore: false };
+  if (resume === "new") return empty;
   const projectsRoot = join(claudeHome, "projects");
-  if (!existsSync(projectsRoot)) return [];
+  if (!existsSync(projectsRoot)) return empty;
   for (const entry of readdirSync(projectsRoot)) {
     const s = scanProjectDir(projectsRoot, entry);
     if (!s) continue;
@@ -149,13 +150,13 @@ export function historyForProject(
     // that id's own file. Never substitute another session's transcript for a
     // missing id — a brand-new session's backend id has no file yet, and on a
     // reconnect the fallback would seed it with the previous session's messages.
-    if (resume === "latest") return parseHistory(s.newestText, limit);
+    if (resume === "latest") return parseHistoryWindow(s.newestText, limit);
     const match = s.sessions.find((x) => x.sessionId === resume);
-    if (!match) return [];
+    if (!match) return empty;
     const text = readSafe(match.file);
-    return text ? parseHistory(text, limit) : [];
+    return text ? parseHistoryWindow(text, limit) : empty;
   }
-  return [];
+  return empty;
 }
 
 export function resolveResume(

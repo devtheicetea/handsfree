@@ -99,19 +99,19 @@ describe("CodexStore", () => {
   it("history: by specific thread id, by latest, [] for new/unknown", () => {
     writeRollout("rollout-2026-06-11T10-00-00-thr_abc.jsonl", SAMPLE, new Date("2026-06-11T10:00:00Z"));
     const store = new CodexStore(home);
-    expect(store.history("/Users/dev/proj", "latest", 25)).toHaveLength(4);
-    expect(store.history("/Users/dev/proj", "thr_abc", 1)).toEqual([{ role: "assistant", text: "It passes.", tools: [] }]);
-    expect(store.history("/Users/dev/proj", "new", 25)).toEqual([]);
+    expect(store.history("/Users/dev/proj", "latest", 25).items).toHaveLength(4);
+    expect(store.history("/Users/dev/proj", "thr_abc", 1).items).toEqual([{ role: "assistant", text: "It passes.", tools: [] }]);
+    expect(store.history("/Users/dev/proj", "new", 25).items).toEqual([]);
     // A specific id with no rollout (e.g. a brand-new session) must return [] —
     // never another thread in the same project (the reconnect history bug).
-    expect(store.history("/Users/dev/proj", "thr_missing", 25)).toEqual([]);
-    expect(store.history("/unknown", "latest", 25)).toEqual([]);
+    expect(store.history("/Users/dev/proj", "thr_missing", 25).items).toEqual([]);
+    expect(store.history("/unknown", "latest", 25).items).toEqual([]);
   });
 
   it("returns [] / empty when the codex home does not exist at all", () => {
     const store = new CodexStore(join(home, "missing"));
     expect(store.listProjects()).toEqual([]);
-    expect(store.history("/x", "latest", 5)).toEqual([]);
+    expect(store.history("/x", "latest", 5).items).toEqual([]);
   });
 });
 

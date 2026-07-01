@@ -19,7 +19,7 @@ function fakeStore(over: Partial<SessionStore> = {}): SessionStore {
     listProjects: () => [],
     listSessions: () => [],
     resolveResume: (_p, resume) => (resume === "new" ? undefined : resume),
-    history: () => [],
+    history: () => ({ items: [], hasMore: false }),
     ...over,
   };
 }
@@ -378,7 +378,7 @@ describe("BridgeServer", () => {
     const port = await server.listen();
     const ws = await connect(port);
     ws.send(JSON.stringify({ type: "hello" }));
-    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.8.0", agents: { claude: true, codex: true } });
+    expect(await next(ws)).toMatchObject({ type: "hello_ok", version: "0.9.0", agents: { claude: true, codex: true } });
     ws.close();
   });
 
@@ -403,7 +403,7 @@ describe("BridgeServer", () => {
     server = new BridgeServer({
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new FakeSession() as any,
-      stores: { claude: fakeStore(), codex: fakeStore({ history: () => [item] }) },
+      stores: { claude: fakeStore(), codex: fakeStore({ history: () => ({ items: [item], hasMore: false }) }) },
       makeWatcher: (d) => { watcherDeps = d; return { start: () => { starts++; }, stop: () => { stops++; } } as any; },
     });
     const port = await server.listen();
@@ -476,8 +476,8 @@ describe("BridgeServer", () => {
       config: { port: 0, bindAddress: "127.0.0.1", token: null, safelist: [], codexPath: null },
       makeSession: () => new Session(new FakeBackend()),
       stores: {
-        claude: fakeStore({ history: () => [] }),
-        codex: fakeStore({ history: () => [codexItem] }),
+        claude: fakeStore({ history: () => ({ items: [], hasMore: false }) }),
+        codex: fakeStore({ history: () => ({ items: [codexItem], hasMore: false }) }),
       },
       checkCodex: async () => "codex 0.99.0",
     });

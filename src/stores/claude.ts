@@ -17,7 +17,7 @@ export class ClaudeStore implements SessionStore {
     return resolveResume(this.claudeHome, projectPath, resume);
   }
 
-  history(projectPath: string, resume: string, limit: number): HistoryItem[] {
+  history(projectPath: string, resume: string, limit: number): { items: HistoryItem[]; hasMore: boolean } {
     return historyForProject(this.claudeHome, projectPath, resume, limit);
   }
 

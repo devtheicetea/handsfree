@@ -93,12 +93,33 @@ describe("historyForProject", () => {
       JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "ping" } }),
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "pong" }] } }),
     ].join("\n") + "\n");
-    expect(historyForProject(home, "/Users/me/app", "latest", 25)).toEqual([
+    expect(historyForProject(home, "/Users/me/app", "latest", 25).items).toEqual([
       { role: "user", text: "ping", tools: [] },
       { role: "assistant", text: "pong", tools: [] },
     ]);
-    expect(historyForProject(home, "/Users/me/app", "new", 25)).toEqual([]);
-    expect(historyForProject(home, "/Users/me/nope", "latest", 25)).toEqual([]);
+    expect(historyForProject(home, "/Users/me/app", "new", 25).items).toEqual([]);
+    expect(historyForProject(home, "/Users/me/nope", "latest", 25).items).toEqual([]);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("reports hasMore when older turns exist beyond the window (drives pagination)", () => {
+    const home = mkdtempSync(join(tmpdir(), "claude-home-pg-"));
+    const dir = join(home, "projects", "-Users-me-app");
+    mkdirSync(dir, { recursive: true });
+    // 3 user turns; a window of 2 must drop the oldest AND flag hasMore.
+    writeFileSync(join(dir, "s1.jsonl"), [
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "one" } }),
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "two" } }),
+      JSON.stringify({ cwd: "/Users/me/app", type: "user", message: { role: "user", content: "three" } }),
+    ].join("\n") + "\n");
+    const win = historyForProject(home, "/Users/me/app", "latest", 2);
+    expect(win.items).toEqual([
+      { role: "user", text: "two", tools: [] },
+      { role: "user", text: "three", tools: [] },
+    ]);
+    expect(win.hasMore).toBe(true);
+    // A window large enough to hold everything → no more.
+    expect(historyForProject(home, "/Users/me/app", "latest", 25).hasMore).toBe(false);
     rmSync(home, { recursive: true, force: true });
   });
 });
@@ -124,7 +145,7 @@ describe("historyForProject specific-session-id branch", () => {
 
     // s2 was written last so it has a later mtime — it is the "newest" session.
     // Requesting s1 explicitly should return s1's turns, not s2's.
-    expect(historyForProject(home, "/Users/me/app", "s1", 25)).toEqual([
+    expect(historyForProject(home, "/Users/me/app", "s1", 25).items).toEqual([
       { role: "user", text: "from-s1", tools: [] },
       { role: "assistant", text: "reply-s1", tools: [] },
     ]);
@@ -132,7 +153,7 @@ describe("historyForProject specific-session-id branch", () => {
     // A missing session id (e.g. a brand-new session whose file doesn't exist
     // yet) must return [] — never the newest session's turns. Substituting s2
     // here is the reconnect bug that filled a new empty session with old messages.
-    expect(historyForProject(home, "/Users/me/app", "missing-id", 25)).toEqual([]);
+    expect(historyForProject(home, "/Users/me/app", "missing-id", 25).items).toEqual([]);
 
     rmSync(home, { recursive: true, force: true });
   });
@@ -173,7 +194,7 @@ describe("ClaudeStore", () => {
     const fromStore = store2.history("/Users/me/app", "latest", 25);
     const direct = historyForProject(home2, "/Users/me/app", "latest", 25);
     expect(fromStore).toEqual(direct);
-    expect(fromStore).toEqual([
+    expect(fromStore.items).toEqual([
       { role: "user", text: "hello", tools: [] },
       { role: "assistant", text: "world", tools: [] },
     ]);

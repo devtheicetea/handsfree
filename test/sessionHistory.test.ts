@@ -80,6 +80,58 @@ describe("parseHistory", () => {
     ]);
   });
 
+  it("renders a slash-command invocation as '/x' and drops the local-command caveat", () => {
+    const jsonl = [
+      line({ type: "user", message: { role: "user", content: "before" } }),
+      line({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } }),
+      // the caveat block Claude Code injects before a local command — model instruction, dropped
+      line({ type: "user", message: { role: "user", content: "<local-command-caveat>Caveat: …DO NOT respond…</local-command-caveat>" } }),
+      // the command invocation itself — shown tidily as "/voice", not raw XML
+      line({ type: "user", message: { role: "user", content: "<command-name>/voice</command-name>\n  <command-message>voice</command-message>\n  <command-args></command-args>" } }),
+    ].join("\n");
+    expect(parseHistory(jsonl, 25)).toEqual([
+      { role: "user", text: "before", tools: [] },
+      { role: "assistant", text: "ok", tools: [] },
+      { role: "user", text: "/voice", tools: [] },
+    ]);
+  });
+
+  it("does NOT rewrite an assistant turn that merely mentions <command-name> in prose", () => {
+    const jsonl = [
+      line({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "The <command-name>/voice</command-name> markup leaks." }] } }),
+    ].join("\n");
+    expect(parseHistory(jsonl, 25)).toEqual([
+      { role: "assistant", text: "The <command-name>/voice</command-name> markup leaks.", tools: [] },
+    ]);
+  });
+
+  it("counts image attachment blocks (text + image)", () => {
+    const jsonl = line({
+      type: "user",
+      message: { role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "AAAA" } },
+        { type: "text", text: "look at this" },
+      ] },
+    });
+    expect(parseHistory(jsonl, 25)).toEqual([{ role: "user", text: "look at this", tools: [], images: 1 }]);
+  });
+
+  it("keeps an image-only user turn (no text) instead of skipping it", () => {
+    const jsonl = line({
+      type: "user",
+      message: { role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "BBBB" } },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "CCCC" } },
+      ] },
+    });
+    expect(parseHistory(jsonl, 25)).toEqual([{ role: "user", text: "", tools: [], images: 2 }]);
+  });
+
+  it("omits the images field when there are none", () => {
+    const jsonl = line({ type: "user", message: { role: "user", content: "just text" } });
+    expect(parseHistory(jsonl, 25)).toEqual([{ role: "user", text: "just text", tools: [] }]);
+  });
+
   it("lastTurn returns the final item or null", () => {
     const jsonl = line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", name: "Read", input: {} }] } });
     expect(lastTurn(jsonl)).toEqual({ role: "assistant", text: "", tools: ["Read"] });

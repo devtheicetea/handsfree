@@ -15,7 +15,7 @@ import type { AgentName } from "./backends/types.js";
 import type { Config } from "./config.js";
 import type { Logger } from "./logger.js";
 
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";   // 0.9.0: load_history pagination (additive, backward-compatible)
 const HISTORY_LIMIT = 25; // turns per view_session snapshot (matches the manager's open snapshot)
 
 export interface ServerDeps {
@@ -55,6 +55,7 @@ export class BridgeServer {
       codexPath: this.codexPath,
       model: this.config.model,
       broadcast: (m) => this.broadcastToSession((m as { sessionKey?: string }).sessionKey, m),
+      broadcastAll: (m) => this.broadcastToAll(m),
     });
     this.watcher = (deps.makeWatcher ?? ((d) => new SessionWatcher(d)))({
       claudeHome: deps.claudeHome,
@@ -248,12 +249,20 @@ export class BridgeServer {
         }
         this.clients.subscribeMirror(ws, `${msg.agent}:${msg.sessionId}`);
         const started = Date.now();
-        const items = this.stores[msg.agent].history(msg.projectPath, msg.sessionId, HISTORY_LIMIT);
+        const { items, hasMore } = this.stores[msg.agent].history(msg.projectPath, msg.sessionId, HISTORY_LIMIT);
         // Carry the session's saved permission mode so the picker shows what will be
         // enforced once the mirror forks live — not a stale safelist default.
         const mode = this.sessions.savedMode(msg.agent, msg.sessionId);
-        this.send(ws, { type: "session_history", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items, mode });
+        this.send(ws, { type: "session_history", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items, mode, hasMore });
         this.logger?.info("view_session_done", { agent: msg.agent, sessionId: msg.sessionId, items: items.length, ms: Date.now() - started });
+        return;
+      }
+      case "load_history": {
+        // Paginated "load earlier": read a larger window straight from disk (works for live
+        // OR mirror sessions, independent of attach) and reply with a history_page the client
+        // merges in, preserving scroll. `limit` grows each time the user scrolls to the top.
+        const { items, hasMore } = this.stores[msg.agent].history(msg.projectPath, msg.sessionId, msg.limit);
+        this.send(ws, { type: "history_page", projectPath: msg.projectPath, agent: msg.agent, sessionId: msg.sessionId, items, hasMore });
         return;
       }
       case "unview_session":

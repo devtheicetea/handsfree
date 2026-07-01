@@ -36,6 +36,8 @@ interface LiveSession {
   /** Explicitly held by the client (voice mode on, or backgrounded with this conversation
    *  open) — gets the long grace regardless of recency; cleared on release. */
   held: boolean;
+  /** Last status bucket fanned out for this session (dedupes redundant session_status). */
+  lastStatusBucket?: "waiting" | "working" | "idle" | "error";
 }
 
 export interface SessionManagerDeps {
@@ -46,7 +48,8 @@ export interface SessionManagerDeps {
   model?: string | null;
   modeStore?: ModeStore;   // durable per-session permission mode (default ~/.handsfree/modes.json)
   nameStore?: NameStore;   // durable per-session custom name (default ~/.handsfree/session-names.json)
-  broadcast: (m: BridgeToClient) => void;   // server fan-out by m.sessionKey
+  broadcast: (m: BridgeToClient) => void;      // server fan-out by m.sessionKey
+  broadcastAll?: (m: BridgeToClient) => void;  // server fan-out to EVERY client (session_status dots)
 }
 
 /**
@@ -64,6 +67,7 @@ export class SessionManager {
   private readonly modeStore: ModeStore;
   private readonly nameStore: NameStore;
   private readonly broadcast: (m: BridgeToClient) => void;
+  private readonly broadcastAll: (m: BridgeToClient) => void;
 
   constructor(deps: SessionManagerDeps) {
     this.safelist = deps.safelist;
@@ -77,6 +81,34 @@ export class SessionManager {
     this.modeStore = deps.modeStore ?? new ModeStore();
     this.nameStore = deps.nameStore ?? new NameStore();
     this.broadcast = deps.broadcast;
+    this.broadcastAll = deps.broadcastAll ?? deps.broadcast;
+  }
+
+  /** The status bucket a session's list-dot shows. "waiting" (a permission/question is pending —
+   *  act now) outranks "working" (a turn streaming or a background task running). */
+  private statusBucket(ls: LiveSession): "waiting" | "working" | "idle" | "error" {
+    if (ls.policy.pendingRequests().length > 0 || ls.questions.pendingRequests().length > 0) return "waiting";
+    if (ls.session.status === "error") return "error";
+    if (ls.session.hasWorkInFlight) return "working";
+    return "idle";
+  }
+
+  /** Recompute a session's status bucket and, if it changed, fan it out to ALL clients so every
+   *  client's session list shows a live dot — not just the one viewing this session. */
+  private fanOutStatus(sessionKey: string): void {
+    const ls = this.sessions.get(sessionKey);
+    if (!ls) return;
+    const status = this.statusBucket(ls);
+    if (ls.lastStatusBucket === status) return;
+    ls.lastStatusBucket = status;
+    const sid = ls.session.backendSessionId ?? ls.resumeId ?? "";
+    if (sid) this.broadcastAll({ type: "session_status", agent: ls.agent, sessionId: sid, status });
+  }
+
+  /** A live session is being torn down (→ read-only mirror): clear its dot for every client. */
+  private fanOutGone(ls: LiveSession): void {
+    const sid = ls.session.backendSessionId ?? ls.resumeId ?? "";
+    if (sid) this.broadcastAll({ type: "session_status", agent: ls.agent, sessionId: sid, status: "idle" });
   }
 
   /** Wrap a session's emit so every message is tagged with its sessionKey. */
@@ -124,7 +156,7 @@ export class SessionManager {
           // history only into an empty conversation), so re-send the snapshot —
           // and do it BEFORE replayTo's buffer replay, or the replayed turn
           // would make the conversation non-empty and the seed would be skipped.
-          this.tagged(key, toOpener)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
+          this.tagged(key, toOpener)({ type: "history", ...this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
           ls.session.replayTo(this.tagged(key, toOpener));
           this.replayPending(key, ls, toOpener);
           return key;
@@ -137,15 +169,17 @@ export class SessionManager {
       (req) => {
         debugLog("agent.permission", { folder: projectPath, session: this.sessions.get(sessionKey)?.session.backendSessionId ?? "", tool: req.tool, id: req.id });
         this.tagged(sessionKey, this.broadcast)(this.permissionRequestMsg(req));
+        this.fanOutStatus(sessionKey);   // → "waiting on you"
       },
-      (id) => this.broadcast({ type: "permission_resolved", sessionKey, id }),
+      (id) => { this.broadcast({ type: "permission_resolved", sessionKey, id }); this.fanOutStatus(sessionKey); },
     );
     const questions = new QuestionRegistry(
       (req) => {
         debugLog("agent.question", { folder: projectPath, session: this.sessions.get(sessionKey)?.session.backendSessionId ?? "", id: req.id, count: req.questions.length });
         this.tagged(sessionKey, this.broadcast)(this.questionRequestMsg(req));
+        this.fanOutStatus(sessionKey);   // → "waiting on you"
       },
-      (id) => this.broadcast({ type: "question_resolved", sessionKey, id }),
+      (id) => { this.broadcast({ type: "question_resolved", sessionKey, id }); this.fanOutStatus(sessionKey); },
     );
     // Restore the user's last-chosen mode for this session id — durable across the
     // disconnect-grace teardown and bridge restarts; falls back to the safelist default.
@@ -154,14 +188,16 @@ export class SessionManager {
     const session = this.makeSession(agent, projectPath);
     this.sessions.set(sessionKey, { session, policy, questions, projectPath, agent, resumeId, lastActiveMs: Date.now(), held: false });
     toOpener({ type: "session_started", nonce, sessionKey, projectPath, agent, resumeId: resumeId ?? "", mode: policy.getMode() });
-    this.tagged(sessionKey, toOpener)({ type: "history", items: this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
+    this.tagged(sessionKey, toOpener)({ type: "history", ...this.stores[agent].history(projectPath, resume, HISTORY_LIMIT) } as BridgeToClient);
     await session.start({
       projectPath, resume: resumeId ?? undefined, policy,
       askUser: (qs) => questions.ask(qs),
       // A fresh session's id isn't known until its first turn — persist any
       // non-default mode the user set before then, once the id arrives.
       onSessionId: (id) => { const m = policy.getMode(); if (m !== "safelist") this.modeStore.set(agent, id, m); },
-      emit: this.tagged(sessionKey, this.broadcast),
+      // Wrap the per-session emit so a status change (thinking/idle/error) also fans the session's
+      // bucket out to every client's list — not just this session's subscribers.
+      emit: (m) => { this.tagged(sessionKey, this.broadcast)(m); if ((m as { type?: string }).type === "status") this.fanOutStatus(sessionKey); },
     });
     return sessionKey;
   }
@@ -177,6 +213,9 @@ export class SessionManager {
         // backing for on-disk session `sid` and would open a read-only mirror instead of
         // attaching live. (No nonce: this is unsolicited, not the reply to an open/view.)
         emit({ type: "session_attached", sessionKey: key, projectPath: ls.projectPath, agent: ls.agent, resumeId: sid } as BridgeToClient);
+        // Seed this (re)connecting client with the session's current status bucket so its list
+        // shows the dot immediately, without waiting for the next transition.
+        if (sid) emit({ type: "session_status", agent: ls.agent, sessionId: sid, status: this.statusBucket(ls) } as BridgeToClient);
         ls.session.replayTo(this.tagged(key, emit));
         this.replayPending(key, ls, emit);
         // If no turn is in flight, replayTo can't recover a reply that completed
@@ -185,10 +224,10 @@ export class SessionManager {
         const streaming = ls.session.streaming;
         let sentHistory = false, itemCount = 0;
         if (!streaming && sid) {
-          const items = this.stores[ls.agent].history(ls.projectPath, sid, HISTORY_LIMIT);
-          itemCount = items.length;
+          const hist = this.stores[ls.agent].history(ls.projectPath, sid, HISTORY_LIMIT);
+          itemCount = hist.items.length;
           sentHistory = true;
-          this.tagged(key, emit)({ type: "history", items } as BridgeToClient);
+          this.tagged(key, emit)({ type: "history", items: hist.items, hasMore: hist.hasMore } as BridgeToClient);
         }
         log?.("reattach", { key, streaming, sentHistory, itemCount, sid });
         keys.push(key);
@@ -219,7 +258,7 @@ export class SessionManager {
     const ls = this.sessions.get(key);
     if (!ls || !ls.session.isActive()) return false;
     toClient({ type: "session_started", nonce, sessionKey: key, projectPath, agent: ls.agent, resumeId: sessionId, mode: ls.policy.getMode() });
-    this.tagged(key, toClient)({ type: "history", items: this.stores[ls.agent].history(projectPath, sessionId, HISTORY_LIMIT) } as BridgeToClient);
+    this.tagged(key, toClient)({ type: "history", ...this.stores[ls.agent].history(projectPath, sessionId, HISTORY_LIMIT) } as BridgeToClient);
     ls.session.replayTo(this.tagged(key, toClient));
     this.replayPending(key, ls, toClient);
     return true;
@@ -383,6 +422,7 @@ export class SessionManager {
       }
       void ls.session.stop();
       this.sessions.delete(key);
+      this.fanOutGone(ls);   // live → mirror: clear the dot everywhere
     }, delayMs);
     this.stopTimers.set(key, timer);
   }
@@ -398,7 +438,7 @@ export class SessionManager {
     const key = this.liveKeyFor(agent, sessionId);
     if (key) {
       const ls = this.sessions.get(key);
-      if (ls) { await ls.session.stop(); this.sessions.delete(key); }
+      if (ls) { await ls.session.stop(); this.sessions.delete(key); this.fanOutGone(ls); }
     }
     const ok = this.stores[agent].deleteSession(projectPath, sessionId);
     debugLog("session.delete", { folder: projectPath, session: sessionId, agent, wasLive: key != null, ok });

@@ -22,7 +22,9 @@ export interface SessionStore {
   listProjects(): StoreProject[];
   listSessions(projectPath: string): SessionMeta[];
   resolveResume(projectPath: string, resume: "latest" | "new" | string): string | undefined;
-  history(projectPath: string, resume: string, limit: number): HistoryItem[];
+  /** The last `limit` turns of a session, plus `hasMore` = whether older turns exist before
+   *  that window (drives the client's "load earlier" pagination). */
+  history(projectPath: string, resume: string, limit: number): { items: HistoryItem[]; hasMore: boolean };
   /** Permanently delete a session's on-disk file (by id). Returns true if removed. */
   deleteSession(projectPath: string, sessionId: string): boolean;
 }

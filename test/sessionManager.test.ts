@@ -11,9 +11,9 @@ import type { StartParams } from "../src/session.js";
 import type { SessionStore } from "../src/stores/types.js";
 import { FakeBackend } from "./fakeBackend.js";
 
-const emptyStore: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => undefined, history: () => [] };
+const emptyStore: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => undefined, history: () => ({ items: [], hasMore: false }) };
 
-const fakeStore = () => ({ listProjects: () => [], listSessions: () => [], resolveResume: () => undefined, history: () => [] });
+const fakeStore = () => ({ listProjects: () => [], listSessions: () => [], resolveResume: () => undefined, history: () => ({ items: [], hasMore: false }) });
 
 /** storesFake: resolveResume returns the resume arg unless "new" → undefined */
 function storesFake(): { claude: SessionStore; codex: SessionStore } {
@@ -21,7 +21,7 @@ function storesFake(): { claude: SessionStore; codex: SessionStore } {
     listProjects: () => [],
     listSessions: () => [],
     resolveResume: (_p: string, r: string) => (r === "new" ? undefined : r),
-    history: () => [],
+    history: () => ({ items: [], hasMore: false }),
   };
   return { claude: s, codex: s };
 }
@@ -368,7 +368,7 @@ describe("SessionManager", () => {
       listProjects: () => [],
       listSessions: () => [],
       resolveResume: (p, r) => { calls.push(`${tag}:${p}:${r}`); return undefined; },
-      history: () => [],
+      history: () => ({ items: [], hasMore: false }),
     });
     const manager = new SessionManager({
       safelist: [],
@@ -398,7 +398,7 @@ describe("sessionKey routing", () => {
 
   it("reattaches a live session for the same resumeId instead of spawning another", async () => {
     let made = 0;
-    const store = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => [] };
+    const store = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => ({ items: [], hasMore: false }) };
     const mgr = new SessionManager({ safelist: [], makeSession: () => { made++; return new FakeSession() as any; },
       stores: { claude: store as any, codex: fakeStore() as any }, broadcast: () => {} });
     const out: any[] = [];
@@ -413,7 +413,7 @@ describe("sessionKey routing", () => {
   });
 
   it("ownsSession matches live sessions by resumeId and by learned backend id", async () => {
-    const store = { listProjects: () => [], listSessions: () => [], resolveResume: () => "thr_resumed", history: () => [] };
+    const store = { listProjects: () => [], listSessions: () => [], resolveResume: () => "thr_resumed", history: () => ({ items: [], hasMore: false }) };
     const manager = new SessionManager({
       safelist: [],
       stores: { claude: fakeStore(), codex: store as any },
@@ -432,7 +432,7 @@ describe("sessionKey routing", () => {
 
   it("re-sends history on reattach, before the buffer replay (restarted client is otherwise blank)", async () => {
     const items = [{ role: "user" as const, text: "from laptop", tools: [] }];
-    const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => items };
+    const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: () => "real-id", history: () => ({ items, hasMore: false }) };
     let backend: FakeBackend | null = null;
     const manager = new SessionManager({
       safelist: [],
@@ -523,7 +523,7 @@ describe("SessionManager broadcast API", () => {
 
   it("reattach sends a catch-up history snapshot for an idle session", async () => {
     const items = [{ role: "user" as const, text: "hi", tools: [] }, { role: "assistant" as const, text: "hello", tools: [] }];
-    const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: (_p, r) => (r === "new" ? undefined : r), history: () => items };
+    const store: SessionStore = { listProjects: () => [], listSessions: () => [], resolveResume: (_p, r) => (r === "new" ? undefined : r), history: () => ({ items, hasMore: false }) };
     const made: FakeSession[] = [];
     const mgr = new SessionManager({
       safelist: [],

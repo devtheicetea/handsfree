@@ -237,8 +237,8 @@ export class CodexStore implements SessionStore {
     return resume;
   }
 
-  history(projectPath: string, resume: string, limit: number): HistoryItem[] {
-    if (resume === "new") return [];
+  history(projectPath: string, resume: string, limit: number): { items: HistoryItem[]; hasMore: boolean } {
+    if (resume === "new") return { items: [], hasMore: false };
     // A specific id reads ONLY that rollout (located by filename); "latest" picks
     // the project's newest thread from a cheap meta scan. Never fall back to
     // another thread for a missing id — a brand-new session has no rollout yet,
@@ -246,7 +246,12 @@ export class CodexStore implements SessionStore {
     const file = resume === "latest"
       ? this.scanMeta().find((s) => s.cwd === projectPath)?.file
       : this.fileForId(resume);
-    return file ? parseCodexHistory(this.fullText(file), limit) : [];
+    if (!file) return { items: [], hasMore: false };
+    // Parse one extra turn to detect whether older history exists beyond the window
+    // (drives "load earlier" pagination) without a second full parse.
+    const all = parseCodexHistory(this.fullText(file), limit + 1);
+    const hasMore = all.length > limit;
+    return { items: hasMore ? all.slice(-limit) : all, hasMore };
   }
 
   deleteSession(_projectPath: string, sessionId: string): boolean {
